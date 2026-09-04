@@ -1,0 +1,8 @@
+spring:
+  application:
+    name: bizpilot-backend-test
+
+logging:
+  level:
+    root: WARN
+    com.bizpilot: INFO

@@ -1,6 +1,14 @@
 # Architecture
 
-> Status: Phase 1 — describes the target architecture. No backend or frontend code exists yet.
+> Status: Phase 2 — the backend foundation described below (application bootstrap, configuration, actuator health, centralized exception handling) exists and is validated. Business modules (`identity`, `organization`, `crm`, `sales`, `products`, `documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+
+## 1a. Backend Foundation (Phase 2)
+
+- Entry point: `com.bizpilot.BizPilotApplication` (`@SpringBootApplication`), positioned at the root package so component scanning covers every module package under `com.bizpilot.*` as they're populated in later phases.
+- Configuration: `application.yml` (defaults, env-var driven) with a `local` profile (`application-local.yml`) active by default, and a `test` profile (`application-test.yml`) used by the test suite. No secrets or environment-specific URLs are hard-coded.
+- Actuator: only the `health` endpoint is exposed, with `show-details: never` — no internal details leak through `/actuator/health`.
+- `common/exception/GlobalExceptionHandler` + `common/response/ApiError` implement the centralized error-response contract defined in [security.md](security.md) (`timestamp`, `status`, `code`, `message`, `path`), with a validation-specific handler and a catch-all handler that logs server-side but never returns stack traces to the client.
+- No datasource, security, or messaging dependencies are wired in yet — those arrive in Phase 3 (database), Phase 4 (authentication), and later phases respectively.
 
 ## 1. Style
 

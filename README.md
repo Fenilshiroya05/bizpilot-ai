@@ -126,19 +126,19 @@ High-level shape:
 └── .gitignore
 ```
 
-Empty directories currently contain a `.gitkeep` placeholder only; no application code has been added yet.
+The backend module folders under `com/bizpilot/` are populated with real code starting in Phase 2 (currently just the application entry point and shared `common` foundation — business modules stay empty `.gitkeep` placeholders until their own phase). Frontend directories remain placeholders until Phase 20.
 
 ## Local Setup
 
-> These instructions describe the target workflow. Backend and frontend projects (Maven/`pom.xml`, Node/`package.json`) have not been generated yet — that happens in Phase 2 (backend foundation) and Phase 20 (frontend foundation).
-
-Prerequisites (once later phases are implemented):
+Prerequisites:
 
 - Java 21 (e.g. via `sdkman` or Temurin)
-- Maven 3.9+
-- Node.js 20+ and npm/pnpm
+- Maven 3.9+ (or use the bundled `./mvnw` wrapper — no local Maven install required)
+- Node.js 20+ and npm/pnpm (needed starting Phase 20 — not yet required)
 - Docker and Docker Compose
-- PostgreSQL client tools (optional, for local inspection)
+- PostgreSQL client tools (optional, for local inspection — not required until Phase 3)
+
+> **Note for Valtech-managed machines:** this is a personal, non-client project. The backend's `backend/.mvn/settings.xml` + `backend/.mvn/maven.config` scope Maven builds in this repo to public Maven Central, so they don't depend on (or get blocked by) the corporate Nexus mirror configured in your global `~/.m2/settings.xml`. Nothing in your global Maven configuration is modified.
 
 ## Environment Variables
 
@@ -148,11 +148,25 @@ Copy the template and fill in real values locally — **never commit `.env`**:
 cp .env.example .env
 ```
 
-See [.env.example](.env.example) for the full list of supported variables (database, JWT, AI provider/API key, Redis, Kafka, storage, CORS, application URL).
+See [.env.example](.env.example) for the full list of supported variables (database, JWT, AI provider/API key, Redis, Kafka, storage, CORS, application URL). The Phase 2 backend foundation itself only reads `SERVER_PORT` and `SPRING_PROFILES_ACTIVE` (both optional, with sensible defaults) — the rest become relevant in later phases.
 
 ## Running the Backend
 
-Not yet available. Will be documented starting in Phase 2 once the Spring Boot project is scaffolded (`cd backend && mvn spring-boot:run`).
+From the `backend/` directory:
+
+```bash
+cd backend
+./mvnw spring-boot:run
+```
+
+The API starts on `http://localhost:8080` by default (override with `SERVER_PORT`). Verify it's up:
+
+```bash
+curl http://localhost:8080/actuator/health
+# {"status":"UP"}
+```
+
+Active Spring profile defaults to `local` (override with `SPRING_PROFILES_ACTIVE`).
 
 ## Running the Frontend
 
@@ -160,17 +174,25 @@ Not yet available. Will be documented starting in Phase 20 once the Vite project
 
 ## Running with Docker
 
-A baseline `docker-compose.yml` exists for local infrastructure (PostgreSQL/PGVector, Redis, Kafka) with placeholders for the backend and frontend services once they exist:
+`docker-compose.yml` provides local infrastructure (PostgreSQL/PGVector, Redis, Kafka) plus the backend service (built from `backend/Dockerfile`). The frontend service remains a placeholder until Phase 20:
 
 ```bash
-docker compose up -d
+cp .env.example .env   # at minimum set DB_PASSWORD
+docker compose up -d --build
+curl http://localhost:8080/actuator/health
 ```
-
-Backend/frontend Docker images and multi-stage builds will be added in Phase 28.
 
 ## Running Tests
 
-Not yet available. Backend testing (JUnit 5, Mockito, Testcontainers) and frontend testing will be introduced alongside their respective modules and consolidated in Phase 27.
+From the `backend/` directory:
+
+```bash
+cd backend
+./mvnw test           # unit/context tests
+./mvnw clean verify   # full build + tests, produces target/bizpilot-backend.jar
+```
+
+Frontend testing will be introduced starting in Phase 20/27.
 
 ## Deployment
 

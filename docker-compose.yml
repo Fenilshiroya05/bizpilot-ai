@@ -64,29 +64,28 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
 
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bizpilot-backend
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local}
+      SERVER_PORT: 8080
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "8080:8080"
+    # No dependency on postgres/redis/kafka yet — the Phase 2 backend
+    # foundation does not talk to any of them. This will gain `depends_on`
+    # once database (Phase 3) and messaging integrations are added.
+
   # ---------------------------------------------------------------------
-  # Placeholder services — enabled once their respective build phases
-  # (Phase 2: backend foundation, Phase 20: frontend foundation) exist.
-  # Uncomment once backend/Dockerfile and frontend/Dockerfile are added.
+  # Placeholder — enabled once the frontend foundation (Phase 20) exists.
+  # Uncomment once frontend/Dockerfile is added.
   # ---------------------------------------------------------------------
-  # backend:
-  #   build:
-  #     context: ./backend
-  #     dockerfile: Dockerfile
-  #   container_name: bizpilot-backend
-  #   restart: unless-stopped
-  #   env_file:
-  #     - .env
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_healthy
-  #     kafka:
-  #       condition: service_started
-  #   ports:
-  #     - "8080:8080"
-  #
   # frontend:
   #   build:
   #     context: ./frontend

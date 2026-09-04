@@ -1,6 +1,6 @@
 # Deployment
 
-> Status: Phase 1 — describes the target deployment strategy. Actual Docker images, CI/CD pipelines, and production hardening are delivered in Phase 28, 29, and 30 respectively; this document is the reference those phases implement against.
+> Status: Phase 2 — the backend now has a working multi-stage `backend/Dockerfile` and is wired into `docker-compose.yml`. CI/CD pipelines and production hardening are still delivered in Phase 29 and 30 respectively; this document is the reference those phases implement against.
 
 ## 1. Environments
 
@@ -15,13 +15,16 @@
 - `postgres` — PostgreSQL with the PGVector extension
 - `redis` — caching, rate limiting
 - `kafka` (+ dependency) — async/event-driven workflows
-- `backend` — placeholder for the Spring Boot application (built once Phase 2 exists)
+- `backend` — the Spring Boot application, built from `backend/Dockerfile` (multi-stage: Maven build → minimal JRE runtime, non-root user, container `HEALTHCHECK` against `/actuator/health`)
 - `frontend` — placeholder for the Vite/React application (built once Phase 20 exists)
 
 ```bash
-cp .env.example .env   # fill in local values, never commit .env
-docker compose up -d
+cp .env.example .env   # fill in local values (at minimum DB_PASSWORD), never commit .env
+docker compose up -d --build
+curl http://localhost:8080/actuator/health
 ```
+
+The `backend` service does not yet declare a `depends_on` relationship to `postgres`/`redis`/`kafka` — the Phase 2 codebase doesn't talk to any of them. That dependency is added once the backend actually integrates with each (Phase 3 for the database, later phases for Redis/Kafka).
 
 ## 3. Containers
 

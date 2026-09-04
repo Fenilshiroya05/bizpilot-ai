@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: bizpilot-backend
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+  info:
+    env:
+      enabled: false
+
+logging:
+  level:
+    root: INFO
+    com.bizpilot: ${LOG_LEVEL_APP:INFO}
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} %-5level [%thread] %logger{36} - %msg%n"
