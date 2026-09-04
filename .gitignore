@@ -1,0 +1,58 @@
+# ---- Environment / secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- Java / Maven / Spring Boot (backend) ----
+backend/target/
+backend/**/target/
+*.class
+*.jar
+*.war
+!.mvn/wrapper/maven-wrapper.jar
+hs_err_pid*
+replay_pid*
+
+# ---- Node / Vite / React (frontend) ----
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- IDE ----
+.idea/
+*.iml
+.vscode/
+!.vscode/extensions.json
+.classpath
+.project
+.settings/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- Logs ----
+*.log
+logs/
+
+# ---- Local database / storage artifacts ----
+*.sqlite
+*.db
+/data/
+backend/uploads/
+frontend/local-storage/
+
+# ---- Docker ----
+docker-compose.override.yml
+
+# ---- Test / coverage output ----
+coverage/
+.nyc_output/
+backend/**/surefire-reports/
+backend/**/failsafe-reports/
