@@ -17,21 +17,29 @@ import java.util.stream.Collectors;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Verifies the Flyway-seeded RBAC catalog (V4, extended by V7 in Phase 9 and
- * V9 in Phase 11) matches the documented mapping in docs/security.md exactly
- * — role permissions section "Verify each configured role receives the
- * intended permissions."
+ * Verifies the Flyway-seeded RBAC catalog (V4, extended by V7 in Phase 9, V9
+ * in Phase 11, and V10 in Phase 12) matches the documented mapping in
+ * docs/security.md exactly — role permissions section "Verify each
+ * configured role receives the intended permissions."
  *
  * <p>Updated in Phase 9: V7 added {@code PRODUCT_READ}/{@code CREATE}/
- * {@code UPDATE}/{@code DELETE} to the catalog. Updated again in Phase 11:
- * V9 added {@code INVOICE_READ}/{@code CREATE}/{@code UPDATE}/{@code DELETE}
- * (CLAUDE.md §9 frames its permission list as "Examples:", not a closed set
- * — see V7/V9's migration comments and docs/security.md). This is an
- * expected, necessary update to a pre-existing Phase 6 regression test, not
- * a change to its purpose: updating the fixed expected-permission-set
- * literals to match the now intentionally-larger catalog, the same way
- * Phase 9 itself updated this same test's literals when {@code PRODUCT_*}
- * was added.
+ * {@code UPDATE}/{@code DELETE} to the catalog. Updated in Phase 11: V9
+ * added {@code INVOICE_READ}/{@code CREATE}/{@code UPDATE}/{@code DELETE}.
+ * Updated again in Phase 12: V10 added {@code TASK_READ}/{@code CREATE}/
+ * {@code UPDATE}/{@code DELETE} — with a deliberately different role
+ * mapping from every other resource added so far (EMPLOYEE and SALES both
+ * receive {@code TASK_CREATE}/{@code TASK_UPDATE}, not just
+ * {@code TASK_READ}; only {@code TASK_DELETE} is restricted to
+ * OWNER/ADMIN/MANAGER) — an approved Phase 12 decision, since a Task is a
+ * general-purpose operational to-do every role needs to manage for
+ * themselves, unlike the sales/finance documents every other resource here
+ * represents. CLAUDE.md §9 frames its permission list as "Examples:", not a
+ * closed set — see V7/V9/V10's migration comments and docs/security.md.
+ * This is an expected, necessary update to a pre-existing Phase 6
+ * regression test, not a change to its purpose: updating the fixed
+ * expected-permission-set literals to match the now intentionally-larger
+ * catalog, the same way Phase 9 and Phase 11 themselves updated this same
+ * test's literals when {@code PRODUCT_*}/{@code INVOICE_*} were added.
  *
  * <p>{@code @Transactional} keeps the Hibernate session open for the lazy
  * {@code Role.permissions} collection — safe here because, unlike
@@ -50,7 +58,8 @@ class RoleSeedDataTests {
             "QUOTATION_READ", "QUOTATION_CREATE", "QUOTATION_UPDATE", "QUOTATION_DELETE",
             "DOCUMENT_READ", "DOCUMENT_UPLOAD", "AI_USE", "USER_MANAGE",
             "PRODUCT_READ", "PRODUCT_CREATE", "PRODUCT_UPDATE", "PRODUCT_DELETE",
-            "INVOICE_READ", "INVOICE_CREATE", "INVOICE_UPDATE", "INVOICE_DELETE"
+            "INVOICE_READ", "INVOICE_CREATE", "INVOICE_UPDATE", "INVOICE_DELETE",
+            "TASK_READ", "TASK_CREATE", "TASK_UPDATE", "TASK_DELETE"
     );
 
     @Autowired
@@ -94,7 +103,8 @@ class RoleSeedDataTests {
                 "QUOTATION_READ", "QUOTATION_CREATE", "QUOTATION_UPDATE", "QUOTATION_DELETE",
                 "DOCUMENT_READ", "DOCUMENT_UPLOAD", "AI_USE",
                 "PRODUCT_READ", "PRODUCT_CREATE", "PRODUCT_UPDATE", "PRODUCT_DELETE",
-                "INVOICE_READ", "INVOICE_CREATE", "INVOICE_UPDATE", "INVOICE_DELETE");
+                "INVOICE_READ", "INVOICE_CREATE", "INVOICE_UPDATE", "INVOICE_DELETE",
+                "TASK_READ", "TASK_CREATE", "TASK_UPDATE", "TASK_DELETE");
     }
 
     @Test
@@ -108,19 +118,27 @@ class RoleSeedDataTests {
                 "QUOTATION_READ", "QUOTATION_CREATE", "QUOTATION_UPDATE",
                 "DOCUMENT_READ", "DOCUMENT_UPLOAD", "AI_USE",
                 "PRODUCT_READ", "PRODUCT_CREATE", "PRODUCT_UPDATE",
-                "INVOICE_READ", "INVOICE_CREATE", "INVOICE_UPDATE");
+                "INVOICE_READ", "INVOICE_CREATE", "INVOICE_UPDATE",
+                "TASK_READ", "TASK_CREATE", "TASK_UPDATE");
         assertThat(permissions).doesNotContain(
-                "CUSTOMER_DELETE", "LEAD_DELETE", "QUOTATION_DELETE", "PRODUCT_DELETE", "INVOICE_DELETE", "USER_MANAGE");
+                "CUSTOMER_DELETE", "LEAD_DELETE", "QUOTATION_DELETE", "PRODUCT_DELETE", "INVOICE_DELETE",
+                "TASK_DELETE", "USER_MANAGE");
     }
 
+    /**
+     * EMPLOYEE is read-only for every resource except Tasks — an approved
+     * Phase 12 exception (see class Javadoc): EMPLOYEE also receives
+     * {@code TASK_CREATE}/{@code TASK_UPDATE}, not just {@code TASK_READ}.
+     */
     @Test
-    void employeeHasReadOnlyPermissionsPlusAiUse() {
+    void employeeHasReadOnlyPermissionsExceptTasksPlusAiUse() {
         Role employee = roleRepository.findByName("EMPLOYEE").orElseThrow();
         Set<String> permissions = employee.getPermissions().stream().map(Permission::getName).collect(Collectors.toSet());
 
         assertThat(permissions).containsExactlyInAnyOrder(
                 "CUSTOMER_READ", "LEAD_READ", "QUOTATION_READ", "DOCUMENT_READ", "AI_USE", "PRODUCT_READ",
-                "INVOICE_READ");
+                "INVOICE_READ", "TASK_READ", "TASK_CREATE", "TASK_UPDATE");
+        assertThat(permissions).doesNotContain("TASK_DELETE");
     }
 
     @Test

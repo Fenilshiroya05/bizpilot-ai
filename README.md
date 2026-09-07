@@ -326,6 +326,38 @@ curl -s -X DELETE http://localhost:8080/api/v1/invoices/$INVOICE_ID -H "Authoriz
 
 Every monetary total (`subtotal`, `taxAmount`, `total`) is always calculated by the backend — same rule as Quotations. **Immutability**: once an invoice leaves `DRAFT` (e.g. via the `status:"ISSUED"` update above), it becomes fully locked — any further `PATCH` (customer, items, due date, or status) is rejected with `409 CONFLICT`/`INVOICE_NOT_EDITABLE`, regardless of which field is being changed. The only remaining operation on a non-DRAFT invoice is cancellation (`DELETE`), which never alters its financial contents. There is no discount field and no link to a quotation — see [docs/security.md](docs/security.md) and [docs/database.md](docs/database.md) for the full reasoning, including why CLAUDE.md's own wording on this point was read strictly.
 
+### Tasks (Phase 12)
+
+```bash
+# Create a task (requires TASK_CREATE — every role, including EMPLOYEE and
+# SALES, has this permission; only cancellation is restricted)
+curl -s -X POST http://localhost:8080/api/v1/tasks \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"title":"Follow up with customer","priority":"HIGH","dueDate":"2026-10-01","customerId":"'"$CUSTOMER_ID"'"}'
+
+# Assign (or unassign with assigneeUserId: null) — a dedicated endpoint,
+# never the general update endpoint, to avoid "omitted = no change" vs.
+# "null = unassign" ambiguity
+curl -s -X POST http://localhost:8080/api/v1/tasks/$TASK_ID/assign \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"assigneeUserId":"'"$USER_ID"'"}'
+
+# Update status (TODO/IN_PROGRESS/COMPLETED — CANCELLED is rejected here, see below).
+# Unlike Invoices, a task remains fully editable at every status: reopening a
+# COMPLETED or CANCELLED task via the same endpoint is a normal, supported update.
+curl -s -X PATCH http://localhost:8080/api/v1/tasks/$TASK_ID \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"status":"COMPLETED"}'
+
+# List/search/filter/paginate
+curl -s "http://localhost:8080/api/v1/tasks?status=TODO&assignedToUserId=$USER_ID&page=0&size=20" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Cancel (soft — transitions to the existing CANCELLED status; requires TASK_DELETE,
+# restricted to OWNER/ADMIN/MANAGER)
+curl -s -X DELETE http://localhost:8080/api/v1/tasks/$TASK_ID -H "Authorization: Bearer $TOKEN"
+```
+
+Tasks live in their own top-level `tasks` module (not `sales`/`crm`), per CLAUDE.md's own architecture section. The assignee, customer, and lead references are plain UUID fields validated tenant-safe on every write — never trusted from the client — but are not JPA relationships, since nothing here ever needs to load the full referenced entity. See [docs/security.md](docs/security.md) and [docs/database.md](docs/database.md) for the full reasoning behind the non-default RBAC mapping and the no-immutability decision.
+
 ## Running the Frontend
 
 Not yet available. Will be documented starting in Phase 20 once the Vite project is scaffolded (`cd frontend && npm install && npm run dev`).

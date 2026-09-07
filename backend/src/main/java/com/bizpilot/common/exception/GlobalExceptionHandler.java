@@ -26,6 +26,9 @@ import com.bizpilot.sales.exception.QuotationNotFoundException;
 import com.bizpilot.security.exception.AccountNotActiveException;
 import com.bizpilot.security.exception.InvalidCredentialsException;
 import com.bizpilot.security.exception.InvalidRefreshTokenException;
+import com.bizpilot.tasks.exception.InvalidLeadReferenceException;
+import com.bizpilot.tasks.exception.InvalidTaskDataException;
+import com.bizpilot.tasks.exception.TaskNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
@@ -377,6 +380,40 @@ public class GlobalExceptionHandler {
                 request.getRequestURI()
         );
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    @ExceptionHandler(TaskNotFoundException.class)
+    public ResponseEntity<ApiError> handleTaskNotFound(TaskNotFoundException ex, HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.NOT_FOUND.value(),
+                "TASK_NOT_FOUND",
+                "Task not found",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+    }
+
+    @ExceptionHandler(InvalidTaskDataException.class)
+    public ResponseEntity<ApiError> handleInvalidTaskData(InvalidTaskDataException ex, HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "INVALID_TASK_DATA",
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(InvalidLeadReferenceException.class)
+    public ResponseEntity<ApiError> handleInvalidLeadReference(InvalidLeadReferenceException ex,
+                                                                  HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "INVALID_LEAD_REFERENCE",
+                "The specified lead does not exist in this organization",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

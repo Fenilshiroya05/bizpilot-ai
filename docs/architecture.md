@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 10 — the `sales` module gains Quotations, the first resource referencing entities from two other business modules at once (`crm.Customer`, `products.Product`) and the first with a backend-owned, persisted financial calculation chain. Remaining business modules (`documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 12 — `tasks` is the first business module to be built as its own top-level package rather than folded into `sales`/`crm` (CLAUDE.md §42 assigns it a dedicated package), and the first tenant-scoped entity with no cross-module JPA relationships at all — its assignee/customer/lead references are plain UUID columns, mirroring `sales.entity.Lead.assignedToUserId`. Remaining business modules (`documents`, `ai`, `analytics`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -90,6 +90,16 @@
 - **PDF generation (`InvoicePdfService`) reuses the exact Apache PDFBox usage pattern from `QuotationPdfService`**, including the WinAnsiEncoding-sanitization fix from Phase 10's security review — no new dependency was added.
 - Full detail is in [security.md](security.md) §2f/§3h/§3i and [database.md](database.md) §0h.
 
+## 1k. Task Foundation (Phase 12)
+
+- **First business module in its own top-level package.** CLAUDE.md §42 assigns `tasks` a dedicated top-level package (alongside `documents`/`ai`/`analytics`/`notifications`/`audit`), unlike Quotations/Invoices, which were explicitly folded into `sales` by their own phase instructions. `tasks` gains `entity/Task`, `entity/TaskStatus`, `entity/TaskPriority`, `repository/TaskRepository`, `dto/*`, `mapper/TaskMapper`, `service/TaskService`, `service/TaskSearchCriteria`, `controller/TaskController` (`/api/v1/tasks`), `exception/TaskNotFoundException`/`InvalidTaskDataException`/`InvalidLeadReferenceException`.
+- **First tenant-scoped entity with no cross-module JPA relationships beyond `Organization`.** `Task.assignedToUserId`/`customerId`/`leadId` are plain `UUID` columns, not `@ManyToOne` relationships — the same attribution-style-reference pattern already established by `sales.entity.Lead.assignedToUserId` (Phase 8), extended here to all three of a Task's references since nothing in this module ever needs to load the full `User`/`Customer`/`Lead` entity.
+- **No immutability, unlike Invoice.** `TaskService.update` never rejects a request based on the task's current status — a task remains fully editable at every status, including reopening a `COMPLETED`/`CANCELLED` task back to `TODO`/`IN_PROGRESS` (an explicit, approved Phase 12 decision, deliberately the opposite of Invoice's `DRAFT`-only editability).
+- **Dedicated assignment endpoint**, mirroring `LeadController`'s `/assign` exactly: `POST /api/v1/tasks/{id}/assign`, gated by `TASK_UPDATE` (no separate assign permission), supporting unassignment via `assigneeUserId: null`.
+- **First resource with a non-default RBAC role mapping.** Unlike every prior resource (SALES = CRUD minus delete, EMPLOYEE = read-only), Tasks grant EMPLOYEE and SALES both `TASK_CREATE`/`TASK_UPDATE` — only `TASK_DELETE` (cancellation) is restricted to OWNER/ADMIN/MANAGER. An approved Phase 12 decision: a Task is a general-purpose operational to-do every role manages for themselves, not a sales/finance document.
+- **No notes/activity table** — CLAUDE.md §23 lists a single "Notes" feature bullet with no accompanying "activities"/"history" bullet (contrast Lead/Customer, which each list both), so `notes` is a single plain text column on `Task` itself.
+- Full detail is in [security.md](security.md) §2g/§3j and [database.md](database.md) §0i.
+
 ## 1. Style
 
 BizPilot AI is built as a **modular monolith** on the backend, not a microservices system. Business capabilities are separated into clearly bounded Java packages (modules) inside a single Spring Boot application. This gives most of the maintainability benefits of modular design (clear boundaries, independent evolution, testability) without the operational overhead of distributed systems, which is not justified at this stage.
@@ -143,7 +153,7 @@ Each module owns its own controller/service/repository/entity/dto/mapper/excepti
 | `documents` | Document upload, storage abstraction, text extraction, chunking |
 | `ai` | Spring AI integration: chat, embeddings, RAG, tool calling, conversation memory |
 | `analytics` | Dashboards, aggregated reporting |
-| `tasks` | Task management |
+| `tasks` | Task management ✅ (Phase 12) |
 | `notifications` | Notification delivery |
 | `audit` | Audit logging for sensitive/important operations |
 

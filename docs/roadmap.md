@@ -17,7 +17,7 @@ Status legend: `[x]` complete · `[ ]` not started.
 | 9 | Products | [x] |
 | 10 | Quotations | [x] |
 | 11 | Invoices | [x] |
-| 12 | Tasks | [ ] |
+| 12 | Tasks | [x] |
 | 13 | Document management | [ ] |
 | 14 | Spring AI foundation | [ ] |
 | 15 | RAG + PGVector | [ ] |
@@ -182,6 +182,24 @@ No Invoices, Tasks, Documents, AI/RAG, Analytics, Dashboard, frontend, inventory
 - A dedicated security/code review found no critical/high/medium findings — every tenant-isolation, RBAC, mass-assignment, and reference-validation control was reused directly from Phase 10's already-hardened implementation. See [security.md §3i](security.md#3i-security-review-findings-phase-11).
 
 No Payments/payment gateway, Tasks, Documents/storage, AI/RAG, AI assistant/tool calling/lead scoring, Analytics, Dashboard, frontend, inventory, notifications, generic audit logging, generic rate limiting, scheduled jobs, or quotation-to-invoice conversion were added in Phase 11 — those belong to Phase 12 onward (or, for payments, are never in scope per CLAUDE.md).
+
+## Phase 12 — Completed Scope
+
+- **First business module built as its own top-level package**: `tasks/entity/Task`, `TaskStatus`, `TaskPriority`, `repository/TaskRepository`, `dto/*`, `mapper/TaskMapper`, `service/TaskService`, `service/TaskSearchCriteria`, `controller/TaskController` (`/api/v1/tasks`), `exception/TaskNotFoundException`/`InvalidTaskDataException`/`InvalidLeadReferenceException` — CLAUDE.md §42 assigns Tasks its own package (unlike Quotations/Invoices, folded into `sales`).
+- **New RBAC migration with a non-default role mapping**: `TASK_READ`/`CREATE`/`UPDATE`/`DELETE` did not exist before this phase; added in `V10`. Unlike every other resource (SALES = CRUD minus delete, EMPLOYEE = read-only), Tasks grant EMPLOYEE and SALES both create/update — only cancellation (`TASK_DELETE`) is restricted to OWNER/ADMIN/MANAGER, an approved decision reflecting that Tasks are a general-purpose operational tool, not a sales/finance document.
+- **Three independent cross-tenant reference validations on one resource** (assignee, customer, lead) — one more than Quotation/Invoice's two. Assignee reuses `InvalidAssigneeException` (Phase 8); customer reuses the already-generalized `InvalidCustomerReferenceException` (Phase 10/11); lead introduces a new `InvalidLeadReferenceException`, mirroring the same shape. Archived customers, archived leads, and inactive/disabled assignees are all rejected.
+- **Assignee/customer/lead are plain UUID columns, not JPA relationships** — mirroring `Lead.assignedToUserId` (Phase 8) exactly, extended to all three references. `Task` has no cross-module JPA `@ManyToOne` beyond `Organization`.
+- **Dedicated assignment endpoint** (`POST /api/v1/tasks/{id}/assign`, gated by `TASK_UPDATE`), mirroring `LeadController`'s `/assign` exactly, including unassignment via `assigneeUserId: null`.
+- **No immutability, the deliberate opposite of Invoice**: a task remains fully editable at every status, including reopening a `COMPLETED`/`CANCELLED` task back to `TODO`/`IN_PROGRESS` via the general `PATCH` endpoint. `CANCELLED` itself is still reachable only via the dedicated `DELETE` (cancel) action, which is idempotent and never mutates any other field.
+- **No discount, no financial calculation, no PDF** — Tasks have no monetary fields at all, so there is no `TaskCalculator`/`TaskPdfService` equivalent.
+- **No notes/activity table** — CLAUDE.md §23 lists a single "Notes" bullet with no accompanying "activities"/"history" bullet (contrast Lead/Customer); `notes` is a single plain text column on `Task`.
+- A single `TaskResponse` DTO serves both the single-resource endpoint and the paginated list — no `TaskSummaryResponse` was introduced, since `Task` has no lazy child collection and therefore none of the JPA collection-fetch-join-plus-pagination trap that motivated Quotation/Invoice's summary/detail split.
+- Endpoints under `/api/v1/tasks`: create, get, update (PATCH, `CANCELLED` rejected), assign (`POST /{id}/assign`), cancel (`DELETE`), list/search/filter/paginate (status, priority, assignee, unassigned-only, customer, lead, due-date, free-text title search).
+- Mandatory tests: `TaskServiceTest` (31 Mockito unit tests, including a parameterized test proving all four statuses remain editable), `TaskApiTests` (16 full-context CRUD/validation/assignment/pagination/search tests, including a mass-assignment-protection test and a complete-then-reopen test), `TaskAuthorizationTests` (5 tests covering the non-default EMPLOYEE/SALES mapping), `TaskTenantIsolationTests` (12 tests covering cross-org task access, assignment, and all three reference validations) — 64 new tests. Full suite: 413 backend tests passing, confirming no regression to Phases 1–11. A pre-existing Phase 6 regression test (`RoleSeedDataTests`) was updated to include the new `TASK_*` permissions and the non-default EMPLOYEE mapping, the same kind of update Phase 9/11 already required for `PRODUCT_*`/`INVOICE_*`.
+- Manual `docker-compose` end-to-end validation performed (see final report for details), including decoding a live JWT to confirm the EMPLOYEE role's authorities.
+- A dedicated security/code review found no critical/high/medium findings — every tenant-isolation, RBAC, and reference-validation control was reused directly from the already-hardened Phase 8/10/11 patterns. See [security.md §3j](security.md#3j-implementation-notes-phase-12--three-independent-reference-validations-no-immutability).
+
+No notifications, reminders, recurring tasks, calendar integration, scheduled jobs, AI task generation/prioritization, AI assistant integration, analytics, frontend, generic audit logging, task activities/history, or quotation/invoice relationships were added in Phase 12 — those belong to a later phase (or are never in scope for Tasks per CLAUDE.md §23).
 
 ## Process Per Phase
 

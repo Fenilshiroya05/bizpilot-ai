@@ -1,6 +1,6 @@
 # Database
 
-> Status: Phase 11 — `invoices` and `invoice_items` exist (V9 migration), reusing `quotations`/`quotation_items`' (Phase 10, V8) cross-module-reference pattern (`crm.Customer`, `products.Product`) and backend-calculated persisted totals, but with no discount columns and no `quotation_id` — both confirmed, deliberate omissions (CLAUDE.md §15 never mentions either). V9 also seeds new `INVOICE_*` permissions, following the Phase 9/V7 precedent. Built on top of `quotations`/`quotation_items` (Phase 10, V8), `products`/`product_categories` (Phase 9, V7), `leads`/`lead_activities` (Phase 8, V6), `customers`/`customer_activities` (Phase 7, V5), `roles`/`permissions`/`user_roles`/`role_permissions` (Phase 6, V4), `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 12 (tasks), per `docs/roadmap.md`.
+> Status: Phase 12 — `tasks` exists (V10 migration), the first tenant-scoped table whose cross-module references (`assigned_to_user_id`, `customer_id`, `lead_id`) are all plain UUID FK columns rather than backing a JPA relationship, mirroring `leads.assigned_to_user_id` (Phase 8, V6). V10 also seeds new `TASK_*` permissions, following the Phase 9/V7 precedent, with a deliberately non-default role mapping (see §0i). Built on top of `invoices`/`invoice_items` (Phase 11, V9), `quotations`/`quotation_items` (Phase 10, V8), `products`/`product_categories` (Phase 9, V7), `leads`/`lead_activities` (Phase 8, V6), `customers`/`customer_activities` (Phase 7, V5), `roles`/`permissions`/`user_roles`/`role_permissions` (Phase 6, V4), `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 13 (documents), per `docs/roadmap.md`.
 
 ## 0. Implementation Notes (Phase 3)
 
@@ -94,6 +94,15 @@
 - **Cancellation is financially inert.** `InvoiceService.cancel` sets `status = 'CANCELLED'` and saves — it never recalculates `subtotal`/`tax_amount`/`total`, so a cancelled invoice's persisted totals are exactly what they were the instant before cancellation.
 - **Indexes**: `ix_invoices_organization_id`, `ix_invoices_organization_id_status`, `ix_invoices_customer_id`, `ix_invoices_due_date`, `ix_invoice_items_invoice_id`, `ix_invoice_items_product_id` — mirrors `quotations`' index set with `due_date` replacing `valid_until`.
 
+## 0i. Implementation Notes (Phase 12)
+
+- `V10__create_tasks.sql` adds a single `tasks` table — **explicitly named** in the CLAUDE.md §6 initial-entity list, with no accompanying `task_activities`/`task_comments`/`task_history` table (CLAUDE.md §23 lists a single "Notes" feature bullet, unlike `leads`/`customers`, which each separately list an "activities" bullet) — plus `TASK_READ`/`CREATE`/`UPDATE`/`DELETE`, which did not already exist. Follows the exact Phase 9/V7/V9 pattern for adding new permission rows/role mappings without touching V4/V7/V9's existing rows.
+- **`assigned_to_user_id`, `customer_id`, and `lead_id` are all plain UUID columns with DB-level FKs, not JPA relationships** — mirroring `leads.assigned_to_user_id` (Phase 8, V6) exactly, extended here to all three of a Task's references. `tasks` has no JPA `@ManyToOne` beyond `organization_id`, unlike every other business table introduced so far.
+- **The same FK-insufficiency-for-tenant-isolation caveat applies to all three references** (same reasoning as `quotations.customer_id`/`quotation_items.product_id`, Phase 10): a plain FK only guarantees the referenced row exists *somewhere*; cross-tenant integrity is enforced at the application layer in `tasks.service.TaskService` via the tenant-safe `findByIdAndOrganizationId` pattern for each of the three.
+- **No immutability at the schema OR service layer** — unlike `invoices` (Phase 11), there is no status-gated rejection anywhere in `TaskService.update`: a task's row can be freely updated regardless of its current `status` value, including moving `CANCELLED`/`COMPLETED` back to `TODO`/`IN_PROGRESS` (an explicit, approved Phase 12 decision).
+- **Non-default RBAC role mapping** (see docs/security.md §2g): unlike every prior resource's "SALES minus delete, EMPLOYEE read-only" default, `TASK_CREATE`/`TASK_UPDATE` are granted to EMPLOYEE and SALES as well — only `TASK_DELETE` is restricted to OWNER/ADMIN/MANAGER.
+- **Indexes**: `ix_tasks_organization_id`, `ix_tasks_organization_id_status`, `ix_tasks_assigned_to_user_id`, `ix_tasks_customer_id`, `ix_tasks_lead_id`, `ix_tasks_due_date`.
+
 ## 1. Engine
 
 - **PostgreSQL** is the primary datastore.
@@ -132,7 +141,7 @@
 | `quotation_items` ✅ (Phase 10) | Line items on a quotation, snapshotting product name/price/tax — see §0g. |
 | `invoices` ✅ (Phase 11) | Invoices issued to customers — no discount, no quotation reference (see §0h). |
 | `invoice_items` ✅ (Phase 11) | Line items on an invoice, snapshotting product name/price/tax — see §0h. |
-| `tasks` | Task management records, optionally linked to a customer/lead. |
+| `tasks` ✅ (Phase 12) | Task management records, optionally linked to a customer/lead — see §0i. |
 | `documents` | Uploaded document metadata and processing status. |
 | `document_chunks` | Chunked, embedded document text for RAG (PGVector column). |
 | `conversations` | AI assistant conversation sessions. |
@@ -153,6 +162,7 @@ organizations 1──* leads
 organizations 1──* products
 organizations 1──* quotations
 organizations 1──* invoices
+organizations 1──* tasks
 organizations 1──* documents
 
 users *──* roles (via user_roles)
@@ -172,6 +182,15 @@ customers 1──* invoices
 invoices 1──* invoice_items
 invoice_items *──1 products
 -- No quotations <-> invoices relationship (deliberately not implemented — see §0h)
+
+-- tasks.customer_id / tasks.lead_id / tasks.assigned_to_user_id are plain
+-- UUID FK columns, not JPA relationships (see §0i) — shown here as
+-- optional references, not owned collections, since a customer/lead/user
+-- has no back-reference to its tasks.
+tasks *──1 organizations
+tasks *──0..1 customers (optional)
+tasks *──0..1 leads (optional)
+tasks *──0..1 users (optional, via assigned_to_user_id)
 
 documents 1──* document_chunks
 
