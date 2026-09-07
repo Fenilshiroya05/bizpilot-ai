@@ -1,6 +1,15 @@
 # AI Architecture
 
-> Status: Phase 1 — describes the target AI architecture. No Spring AI integration exists yet; introduced starting Phase 14.
+> Status: Phase 14 — a real, minimal Spring AI foundation now exists (`AiChatService`/`AiEmbeddingService`, OpenAI-only, disabled by default). Everything else on this page (RAG, tool calling, action confirmation, structured output, the AI assistant) remains target architecture, not yet implemented — see §0 below for exactly what's real today.
+
+## 0. Implementation Status (Phase 14)
+
+What actually exists today, as opposed to the target design described in §1–§9 below:
+
+- **Real**: `ai/config/AiProperties` + `AiConfiguration`, `ai/service/AiChatService` + `DefaultAiChatService` (wraps Spring AI's `ChatClient`), `ai/service/AiEmbeddingService` + `DefaultAiEmbeddingService` (wraps `EmbeddingModel`), `ai/exception/AiProviderException`. Provider: OpenAI only (`spring-ai-starter-model-openai`, Spring AI 1.1.8). Disabled by default (`bizpilot.ai.enabled=false`, and Spring AI's own `spring.ai.model.chat`/`embedding` also default to `none`) — no OpenAI API key is required to build, test, or start the application.
+- **Real**: a `backend/src/main/resources/prompts/` placeholder directory exists (empty, `.gitkeep` only) as the future home for versioned prompt templates (§7), consistent with §7's "dedicated, versioned location within the `ai` module."
+- **Not yet real**: RAG (§3), tool calling (§4), action confirmation (§5), structured output / lead scoring (§6), the AI assistant itself, conversation persistence, PGVector, document embeddings, and any AI REST endpoint or UI. These remain exactly as designed below, unchanged by Phase 14.
+- **Full implementation account**: see [architecture.md §1m](architecture.md) and [security.md §3l](security.md#3l-implementation-notes-phase-14--spring-ai-foundation-and-the-eager-api-key-startup-bug) (the latter documents a real startup bug caught and fixed before completion — Spring AI's OpenAI auto-configuration eagerly validating an API key at bean-creation time).
 
 ## 1. Principles
 

@@ -85,6 +85,25 @@ services:
       # no MinIO/S3 service is added; /app/uploads is backed by the named
       # volume below so uploaded files survive a container restart.
       DOCUMENT_STORAGE_PATH: ${DOCUMENT_STORAGE_PATH:-/app/uploads}
+      # Phase 14: Spring AI foundation (CLAUDE.md §5) — OpenAI only, disabled
+      # by default. No new service is added here (no Ollama/proxy/vector DB);
+      # OPENAI_API_KEY has no default and is only ever read from .env, never
+      # committed. AI_CHAT_PROVIDER/AI_EMBEDDING_PROVIDER default to "none"
+      # (Spring AI's own auto-configuration OFF), not "openai" — live Docker
+      # validation caught OpenAiChatAutoConfiguration/OpenAiEmbeddingAutoConfiguration
+      # each eagerly requiring a non-blank API key at bean-creation time, which
+      # broke startup with no key configured. To actually enable AI, set
+      # AI_ENABLED=true, AI_PROVIDER=openai, AI_CHAT_PROVIDER=openai,
+      # AI_EMBEDDING_PROVIDER=openai, and a real OPENAI_API_KEY together in
+      # .env — see docs/security.md §3l.
+      AI_ENABLED: ${AI_ENABLED:-false}
+      AI_PROVIDER: ${AI_PROVIDER:-openai}
+      AI_CHAT_PROVIDER: ${AI_CHAT_PROVIDER:-none}
+      AI_EMBEDDING_PROVIDER: ${AI_EMBEDDING_PROVIDER:-none}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AI_CHAT_MODEL: ${AI_CHAT_MODEL:-gpt-4o-mini}
+      AI_EMBEDDING_MODEL: ${AI_EMBEDDING_MODEL:-text-embedding-3-small}
+      AI_CHAT_TEMPERATURE: ${AI_CHAT_TEMPERATURE:-0.7}
     env_file:
       - path: .env
         required: false

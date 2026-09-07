@@ -382,6 +382,21 @@ curl -s -X DELETE http://localhost:8080/api/v1/documents/$DOCUMENT_ID -H "Author
 
 Only PDF, TXT, and DOCX are accepted — the filename extension, declared `Content-Type`, and (for PDF/DOCX) a magic-byte signature must all agree, so an executable renamed to `.pdf` with a spoofed `Content-Type` header is still rejected. Storage is local filesystem only in this phase, behind a small, swappable `DocumentStorageService` abstraction (CLAUDE.md §16) — no S3/MinIO client exists yet, though the abstraction is designed so one can be added later without changing any calling code. Documents have no association with customers/leads/quotations/invoices/tasks (CLAUDE.md §16 names none) and no metadata-update endpoint. Document processing (text extraction, chunking, embeddings, vector storage) is explicitly a later phase (Phase 15, RAG) — this phase only stores and serves the raw file securely. See [docs/security.md](docs/security.md) and [docs/database.md](docs/database.md) for the full storage-isolation, upload-validation, and hard-delete reasoning.
 
+### AI Foundation (Phase 14)
+
+Phase 14 adds a minimal Spring AI foundation with **no REST endpoint and no persistence** — it exists purely so future phases (Phase 15 RAG, Phase 16 tool calling, Phase 17 the AI assistant) have a working `AiChatService`/`AiEmbeddingService` to build on. There is nothing to `curl` yet.
+
+- **Provider: OpenAI only**, via `spring-ai-starter-model-openai` (Spring AI 1.1.8, BOM-managed; Spring Boot stays at 3.5.16, unchanged). This is the only starter that provides both chat and embeddings from one artifact/API key.
+- **Disabled by default.** Set `AI_ENABLED=true` in your local `.env` to activate BizPilot's own `DefaultAiChatService`/`DefaultAiEmbeddingService` beans. That alone is **not** sufficient — Spring AI's own model auto-configuration is independently gated by `AI_CHAT_PROVIDER`/`AI_EMBEDDING_PROVIDER`, which must also be set to `openai` (not left at their `none` default), together with a real `OPENAI_API_KEY`. All three must be set together to actually reach OpenAI:
+  ```
+  AI_ENABLED=true
+  AI_CHAT_PROVIDER=openai
+  AI_EMBEDDING_PROVIDER=openai
+  OPENAI_API_KEY=sk-...your real key...
+  ```
+- With none of the above set (the out-of-the-box default), the application builds, tests, and starts exactly as before — no network call is made and no API key is required. This was verified live: starting the `backend` Docker container with zero AI environment variables and no API key configured starts cleanly with no errors.
+- No AI REST endpoint, no chat UI, no conversation persistence, no RAG, and no tool calling exist yet — see [docs/ai-architecture.md](docs/ai-architecture.md) §0 for exactly what is and isn't implemented, and [docs/security.md](docs/security.md) §3l for a real startup bug (an eager API-key check in Spring AI's own OpenAI auto-configuration) that was caught and fixed during this phase.
+
 ## Running the Frontend
 
 Not yet available. Will be documented starting in Phase 20 once the Vite project is scaffolded (`cd frontend && npm install && npm run dev`).

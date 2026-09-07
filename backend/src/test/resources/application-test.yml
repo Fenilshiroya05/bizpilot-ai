@@ -6,6 +6,19 @@ spring:
     # top of the real production migrations. Never applied outside the test
     # profile, so production schema is unaffected.
     locations: classpath:db/migration,classpath:db/testmigration
+  ai:
+    model:
+      # Defensive, belt-and-suspenders test-only override: even though
+      # bizpilot.ai.enabled=false already means no BizPilot AI service bean
+      # is ever created (so nothing calls Spring AI at all), this additionally
+      # tells Spring AI itself not to auto-configure ANY OpenAI ChatModel/
+      # EmbeddingModel bean during the test run — "none" is Spring AI's own
+      # documented way to fully disable a model type. Guarantees the entire
+      # 491+ -test suite never requires OPENAI_API_KEY under any circumstance,
+      # regardless of Spring AI auto-configuration internals this project
+      # doesn't control.
+      chat: none
+      embedding: none
 
 bizpilot:
   jwt:
@@ -15,6 +28,13 @@ bizpilot:
     secret: test-only-jwt-secret-do-not-use-outside-automated-tests-1234567890
     access-token-expiration-minutes: 15
     refresh-token-expiration-days: 7
+  ai:
+    # Explicit even though it's already the global default (application.yml)
+    # — self-documents that the test suite deliberately never enables the AI
+    # subsystem. DefaultAiChatService/DefaultAiEmbeddingServiceTest construct
+    # their subject under test directly with a mocked ChatClient/EmbeddingModel,
+    # never relying on this Spring context at all.
+    enabled: false
   documents:
     storage:
       # OS temp directory — self-cleaning-ish, never pollutes the repo, and

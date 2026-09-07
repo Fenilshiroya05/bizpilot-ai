@@ -33,6 +33,48 @@ spring:
       # tests bypass the servlet-level multipart resolver entirely).
       max-file-size: 20MB
       max-request-size: 20MB
+  ai:
+    # Spring AI's own provider-selection properties (CLAUDE.md §5) — kept
+    # separate from bizpilot.ai.* below on purpose: this is Spring AI's
+    # native configuration surface (which chat/embedding provider, which
+    # model, temperature, ...), not a BizPilot-level setting.
+    #
+    # Default to "none" (Spring AI's own value meaning "do not auto-configure
+    # this capability at all"), NOT "openai" — verified via live Docker
+    # validation that OpenAiChatAutoConfiguration/OpenAiEmbeddingAutoConfiguration
+    # each build their own OpenAiApi bean, and that bean EAGERLY validates a
+    # non-blank API key at bean-creation time (BeanCreationException on
+    # startup), not lazily at first call. Since Spring AI's own beans are
+    # gated by these spring.ai.model.* properties (not by bizpilot.ai.enabled,
+    # which only gates BizPilot's OWN DefaultAiChatService/DefaultAiEmbeddingService
+    # wrapper beans), defaulting to "openai" here would break application
+    # startup in any environment without a real OPENAI_API_KEY — exactly the
+    # scenario this phase must support. An operator enabling AI must set
+    # AI_CHAT_PROVIDER=openai / AI_EMBEDDING_PROVIDER=openai (alongside
+    # AI_ENABLED=true and a real OPENAI_API_KEY) together; see security.md §3l.
+    model:
+      chat: ${AI_CHAT_PROVIDER:none}
+      embedding: ${AI_EMBEDDING_PROVIDER:none}
+      # The spring-ai-starter-model-openai starter auto-configures several
+      # OTHER OpenAI capabilities BizPilot doesn't use in this (or any
+      # planned) phase — text-to-speech, transcription, image generation,
+      # moderation. Disabled unconditionally (never provider-selectable via
+      # env var) since CLAUDE.md §5 never asks for any of them; re-enable
+      # individually only if a future phase genuinely needs one.
+      audio:
+        speech: none
+        transcription: none
+      image: none
+      moderation: none
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      chat:
+        options:
+          model: ${AI_CHAT_MODEL:gpt-4o-mini}
+          temperature: ${AI_CHAT_TEMPERATURE:0.7}
+      embedding:
+        options:
+          model: ${AI_EMBEDDING_MODEL:text-embedding-3-small}
 
 server:
   port: ${SERVER_PORT:8080}
@@ -42,6 +84,16 @@ bizpilot:
     secret: ${JWT_SECRET}
     access-token-expiration-minutes: ${JWT_ACCESS_TOKEN_EXPIRATION_MINUTES:15}
     refresh-token-expiration-days: ${JWT_REFRESH_TOKEN_EXPIRATION_DAYS:7}
+  ai:
+    # Phase 14 — Spring AI foundation (CLAUDE.md §5). Disabled by default:
+    # unlike JWT_SECRET (mandatory everywhere, since auth is core to every
+    # already-shipped phase), no real feature depends on AI yet, so every
+    # environment without an explicit AI_ENABLED=true keeps the AI subsystem
+    # entirely inert — DefaultAiChatService/DefaultAiEmbeddingService are
+    # simply not created (@ConditionalOnProperty), and no OpenAI API key is
+    # ever required to start the application or run the test suite.
+    enabled: ${AI_ENABLED:false}
+    provider: ${AI_PROVIDER:openai}
   documents:
     storage:
       # Local filesystem only in Phase 13 (CLAUDE.md §16) — resolved to an

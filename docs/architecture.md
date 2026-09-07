@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 13 — `documents` is implemented with local filesystem storage behind a swappable `DocumentStorageService` abstraction (CLAUDE.md §16). The first module doing real file I/O and the first hard-delete in the project. Remaining business modules (`ai`, `analytics`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 14 — `ai` gains its Spring AI 1.1.8 foundation: `AiChatService`/`AiEmbeddingService` wrapping `ChatClient`/`EmbeddingModel`, disabled by default, OpenAI the sole configured provider. No RAG, no PGVector, no persistence, no REST API — those remain later phases. Remaining business modules (`analytics`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -110,6 +110,16 @@
 - **RBAC**: `DOCUMENT_READ`/`DOCUMENT_UPLOAD` already existed since Phase 6 (V4) and are unmodified; only `DOCUMENT_DELETE` is new (V11), restricted to OWNER/ADMIN/MANAGER — narrower than Task's unusually permissive mapping, since documents may hold sensitive business files.
 - Full detail is in [security.md](security.md) §2h/§3k and [database.md](database.md) §0j.
 
+## 1m. Spring AI Foundation (Phase 14)
+
+- **`ai` module** gains `config/AiProperties`, `config/AiConfiguration`, `service/AiChatService` + `DefaultAiChatService`, `service/AiEmbeddingService` + `DefaultAiEmbeddingService`, `exception/AiProviderException`. No `controller/`, `repository/`, `entity/`, or `mapper/` package — there is no REST API, no persistence, and no entity in this phase.
+- **BizPilot business code depends on `AiChatService`/`AiEmbeddingService`, never on `org.springframework.ai.*` types or a provider SDK directly** (CLAUDE.md §5). `DefaultAiChatService` wraps Spring AI's `ChatClient` (the fluent, higher-level API CLAUDE.md names explicitly); `DefaultAiEmbeddingService` wraps `EmbeddingModel`. Neither class branches on a provider name — Spring AI's own auto-configuration (`spring.ai.model.chat`/`spring.ai.model.embedding`) is the entire "provider selection" mechanism; BizPilot does not reimplement a provider registry.
+- **OpenAI is the sole configured provider** (`spring-ai-starter-model-openai`, the only starter providing both `ChatModel` and `EmbeddingModel` from one artifact/one API key) — Spring AI 1.1.8, the last line still built against Spring Boot 3.4.x/3.5.x (2.x requires Spring Boot 4, out of scope). Swapping to Anthropic/Google/Ollama later is a `pom.xml` + configuration change only, per the locked architecture decision.
+- **Disabled by default at two independent levels**: `bizpilot.ai.enabled=false` gates `DefaultAiChatService`/`DefaultAiEmbeddingService` via a single `@ConditionalOnProperty` each (no custom auto-configuration class); separately, Spring AI's own `spring.ai.model.chat`/`spring.ai.model.embedding` default to `none` in `application.yml`, so Spring AI's own `ChatClient`/`EmbeddingModel` auto-configuration doesn't even activate out of the box. Enabling AI requires setting both together (`AI_ENABLED=true` *and* `AI_CHAT_PROVIDER=openai`/`AI_EMBEDDING_PROVIDER=openai` plus a real `OPENAI_API_KEY`) — see the bug below for why the second layer is required, not redundant.
+- **A real startup bug, caught by manual Docker validation (not by the test suite)**: `OpenAiChatAutoConfiguration`/`OpenAiEmbeddingAutoConfiguration` each build an `OpenAiApi` bean that validates a non-blank API key *eagerly*, at bean-creation time — not lazily at first call. Since these beans are gated by Spring AI's own `spring.ai.model.*` properties, not by `bizpilot.ai.enabled`, an initial config that defaulted `spring.ai.model.chat`/`embedding` to `openai` broke the whole application's startup with no key configured, in Docker specifically (the test suite's `application-test.yml` already forced these to `none` and so never caught it). `spring-ai-starter-model-openai` also auto-configures OpenAI text-to-speech/transcription/image/moderation, none of which CLAUDE.md asks for, and audio-speech has the identical eager-validation behavior. Fixed by defaulting `spring.ai.model.chat`/`embedding` to `none` (not `openai`) and disabling audio/image/moderation unconditionally — see [security.md](security.md) §3l for the full account.
+- **Prompt management placeholder**: `backend/src/main/resources/prompts/.gitkeep` — no template content yet (nothing needs one before Phase 17); mirrors the same empty-placeholder convention already used for `ai`/`tasks`/`documents` Java packages before their own phases.
+- Full detail is in [security.md](security.md) §2i/§3l and [docs/ai-architecture.md](ai-architecture.md).
+
 ## 1. Style
 
 BizPilot AI is built as a **modular monolith** on the backend, not a microservices system. Business capabilities are separated into clearly bounded Java packages (modules) inside a single Spring Boot application. This gives most of the maintainability benefits of modular design (clear boundaries, independent evolution, testability) without the operational overhead of distributed systems, which is not justified at this stage.
@@ -161,7 +171,7 @@ Each module owns its own controller/service/repository/entity/dto/mapper/excepti
 | `sales` | Leads ✅ (Phase 8), quotations ✅ (Phase 10), invoices, sales pipeline |
 | `products` | Product catalog, categories ✅ (Phase 9) |
 | `documents` | Document upload, metadata, local storage abstraction ✅ (Phase 13); text extraction/chunking deferred to Phase 15 |
-| `ai` | Spring AI integration: chat, embeddings, RAG, tool calling, conversation memory |
+| `ai` | Spring AI integration: chat ✅/embeddings ✅ foundation (Phase 14); RAG, tool calling, conversation memory deferred to Phase 15+ |
 | `analytics` | Dashboards, aggregated reporting |
 | `tasks` | Task management ✅ (Phase 12) |
 | `notifications` | Notification delivery |
