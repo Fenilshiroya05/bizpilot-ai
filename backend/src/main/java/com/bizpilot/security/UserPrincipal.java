@@ -1,7 +1,6 @@
 package com.bizpilot.security;
 
-import com.bizpilot.identity.entity.UserRole;
-
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -14,6 +13,14 @@ import java.util.UUID;
  * <p>{@code organizationId} is the sole basis for tenant resolution
  * ({@code organization.TenantContext}) — it comes only from the signed JWT,
  * never from client-supplied request data (CLAUDE.md §7).
+ *
+ * <p>{@code authorities} (Phase 6) holds both role authorities
+ * ({@code ROLE_<name>}) and permission-name authorities (e.g.
+ * {@code CUSTOMER_READ}), pre-resolved from the {@code roles}/
+ * {@code role_permissions} model at token-issuance time — see
+ * {@code security.jwt.JwtService}. Spring Security's own {@code ROLE_}
+ * prefix convention is what lets {@code hasRole(...)} and
+ * {@code hasAuthority(...)} both work off this single flat set.
  */
-public record UserPrincipal(UUID userId, UserRole role, UUID organizationId) {
+public record UserPrincipal(UUID userId, UUID organizationId, Set<String> authorities) {
 }

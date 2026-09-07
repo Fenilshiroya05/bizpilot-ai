@@ -11,7 +11,7 @@ Status legend: `[x]` complete · `[ ]` not started.
 | 3 | Database + Flyway | [x] |
 | 4 | Authentication | [x] |
 | 5 | Organizations + multi-tenancy | [x] |
-| 6 | RBAC | [ ] |
+| 6 | RBAC | [x] |
 | 7 | Customers | [ ] |
 | 8 | Leads | [ ] |
 | 9 | Products | [ ] |
@@ -93,6 +93,19 @@ No organizations/multi-tenancy schema, granular RBAC permissions, or other busin
 - No generic `TenantScopedEntity` base class was introduced — `User` is still the only entity needing `organization_id`; that abstraction is deferred until a second entity actually needs it (Phase 7+), per the project's "don't over-engineer a generic multi-tenancy framework" guidance.
 
 No RBAC/roles/permissions, business entities (customers/leads/products/etc.), or frontend work were added in Phase 5 — those belong to Phase 6 onward.
+
+## Phase 6 — Completed Scope
+
+- `identity` module gains `Role`/`Permission` entities (`@ManyToMany` to each other via `role_permissions`) and `RoleRepository`/`PermissionRepository`. `User.roles` replaces the Phase 4 single `role` column with a `@ManyToMany` set (via `user_roles`).
+- `V4__create_rbac_model.sql` — `roles`, `permissions`, `user_roles`, `role_permissions` tables (composite-PK junction tables, no `BaseEntity`); seeds the fixed 5-role/16-permission catalog from CLAUDE.md §9; seeds a role→permission mapping (an implementation decision, since CLAUDE.md doesn't specify one — documented in `docs/security.md`); migrates every existing user's `users.role` value into `user_roles`; drops `users.role` — one authoritative source of role assignment at all times, never two side by side.
+- JWT access tokens now carry an `authorities` claim (replacing the Phase 4/5 `role` claim) — resolved fresh from the DB at every login/refresh (`security.AuthService.resolveAuthorities`), combining `ROLE_<name>` per assigned role plus each role's raw permission names. `JwtAuthenticationFilter` builds request authorities directly from this claim — no database lookup per authenticated request, preserving the no-DB-hit-per-request design.
+- Authorization enforced via Spring Security method security: `@PreAuthorize("hasAuthority('...')")` for permission-based checks (business operations), `@PreAuthorize("hasRole('...')")` still available for role-based checks (admin operations) — both already proven working end-to-end in Phase 4, now extended to the full permission catalog.
+- No role/permission-assignment REST API was added — CLAUDE.md doesn't assign one to Phase 6; role changes happen via the Flyway seed data or direct DB manipulation only.
+- Mandatory security tests: `RoleSeedDataTests` (7 tests verifying the seeded catalog and role→permission mapping exactly), `RbacAuthorizationTests` (7 tests: permission-gated endpoint allow/forbid/unauthenticated, tenant+RBAC combined scenario proving a shared permission never leaks cross-org data, JWT authorities-claim tampering rejected via signature validation, role grant/revoke taking effect only on refresh — never on an already-issued token).
+- Existing Phase 4 authentication tests and Phase 5 tenant-isolation tests updated for the new `User`/`UserPrincipal`/`JwtService` signatures and continue to pass unmodified in behavior — full regression suite green.
+- Security review (background subagent, scoped to the full Phase 6 diff): no CRITICAL or HIGH findings; merge-ready. One MEDIUM noted (potential N+1 when resolving permissions for a user with more than one role — not reachable today, since no code path assigns multiple roles; worth revisiting once a real role-assignment feature exists) and two LOW code-smell notes (a repository method taking a raw `String` instead of a constrained type; an unchecked cast in JWT claim extraction, already safely handled by the existing malformed-claim catch path) — both deferred as non-blocking.
+
+No business entities (customers/leads/products/etc.), role/permission-assignment API, or frontend work were added in Phase 6 — those belong to Phase 7 onward.
 
 ## Process Per Phase
 

@@ -1,6 +1,6 @@
 # Database
 
-> Status: Phase 5 — `organizations` exists as the tenant root, and `users.organization_id` (NOT NULL) links every user to exactly one organization (V3 migration), on top of `users`/`refresh_tokens` (Phase 4, V2) and the Phase 3 database foundation (datasource, JPA/Hibernate, Flyway). Remaining business tables are introduced incrementally starting Phase 7 (customers), per `docs/roadmap.md`.
+> Status: Phase 6 — `roles`, `permissions`, `user_roles`, `role_permissions` exist (V4 migration), replacing the Phase 4 `users.role` column as the single authoritative source of role assignment. Built on top of `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 7 (customers), per `docs/roadmap.md`.
 
 ## 0. Implementation Notes (Phase 3)
 
@@ -13,7 +13,7 @@
 ## 0a. Implementation Notes (Phase 4)
 
 - `V2__create_users_and_refresh_tokens.sql` adds `users` (email unique globally — not yet per-organization, see below) and `refresh_tokens` (FK to `users`, `ON DELETE CASCADE` — deliberate, since a refresh token has no meaning without its owning user).
-- `users.role` and `users.status` are plain `VARCHAR` columns with a `CHECK` constraint restricting them to the enum values, not yet the full `roles`/`permissions`/`user_roles` junction schema from §3 below — that arrives in Phase 6.
+- `users.role` and `users.status` were plain `VARCHAR` columns with a `CHECK` constraint restricting them to the enum values. `users.role` was replaced by the full junction-table model in Phase 6 (V4) — see §0c; `users.status` is unaffected.
 - `refresh_tokens.token_hash` stores only the SHA-256 hash of the refresh token, never the raw value (see [security.md](security.md)).
 - Both tables extend the `BaseEntity` foundation from Phase 3 (UUID id, `created_at`/`updated_at`).
 
@@ -23,6 +23,14 @@
 - `organization_id` is **NOT NULL with no default** — CLAUDE.md §7 states "every business belongs to an organization" as an unconditional invariant, and the project has no production data yet, so no backfill step was included. This migration will therefore fail against **any** environment (not just a local machine) whose `users` table already has rows — including a shared staging/QA database seeded during earlier Phase 4 testing. Migrations are immutable (CLAUDE.md §33), so that case needs a *new* migration with a real backfill, not an edit to this one; for a disposable local/dev database, `docker compose down -v` is sufficient.
 - **No generic `TenantScopedEntity` base class was introduced.** The originally-anticipated abstraction (see prior revision of this doc) would have been premature: `User` is still the *only* entity that needs `organization_id` in this phase (no customers/leads/etc. exist yet — those are Phase 7+). Extracting a shared base class for a single use case is exactly the "generic multi-tenancy framework the application doesn't need yet" the Phase 5 spec explicitly warns against. Revisit this when the first real business entity (Phase 7) needs the same column.
 - **Tenant resolution**: the current organization is derived only from the authenticated JWT (`organization.TenantContext`, backed by `security.CurrentUserProvider`) — never from client-supplied input. See [security.md](security.md) for the full mechanism and the reasoning behind auto-provisioning an organization at registration.
+
+## 0c. Implementation Notes (Phase 6)
+
+- `V4__create_rbac_model.sql` adds `roles`, `permissions`, `user_roles`, `role_permissions`; seeds the fixed 5-role and 16-permission catalog from CLAUDE.md §9; seeds the role→permission mapping (an implementation decision — see [security.md](security.md) §2a for the full table and reasoning); migrates every existing user's `users.role` value into `user_roles`; then drops `users.role`.
+- **Single authoritative source**: the Phase 4 `users.role` column and the new junction-table model were never run side by side — the migration replaces one with the other in one step, specifically to avoid "two competing sources of truth" for role assignment.
+- **Junction tables have no surrogate key**: `user_roles` and `role_permissions` use a composite primary key (`user_id, role_id` / `role_id, permission_id`) and no `created_at`/`updated_at` — unlike every other table in this project (which extends `BaseEntity`), a pure many-to-many assignment either exists or doesn't; there's no independent lifecycle worth auditing. Modeled in JPA as plain `@ManyToMany @JoinTable` relationships (`User.roles`, `Role.permissions`) — no dedicated junction-entity classes.
+- **FK cascade choices** (deliberate per relationship, not a blanket rule — see §2 below): `user_roles.user_id` cascades on user deletion (an assignment is meaningless without the user); `user_roles.role_id` is `ON DELETE RESTRICT` (protects against deleting a role that's still assigned to someone); `role_permissions.role_id` cascades on role deletion; `role_permissions.permission_id` is `ON DELETE RESTRICT`.
+- **No DB-level "every user has ≥1 role" constraint**: this is an application-level invariant only (registration always assigns `EMPLOYEE`; no code path in this phase removes a user's last role) — a true multi-row cardinality constraint would need a trigger, which was judged unnecessary complexity for this phase.
 
 ## 1. Engine
 
@@ -48,9 +56,10 @@
 | `organizations` ✅ (Phase 5) | Tenant root. `name` only — CLAUDE.md specifies no other fields. Every business record will ultimately belong to one. |
 | `users` ✅ (Phase 4, org-scoped since Phase 5) | User accounts. `organization_id` NOT NULL since Phase 5 — see §0b. |
 | `refresh_tokens` ✅ (Phase 4, not in original CLAUDE.md list) | Hashed refresh-token sessions, one row per issued token; supports rotation/revocation. |
-| `roles` | RBAC roles (OWNER, ADMIN, MANAGER, SALES, EMPLOYEE) — Phase 4 stores this as a single column on `users` instead; the full junction-table model here is Phase 6. |
-| `permissions` | Granular permissions (e.g. `CUSTOMER_READ`, `AI_USE`). |
-| `user_roles` | Join table assigning roles to users. |
+| `roles` ✅ (Phase 6) | RBAC roles (OWNER, ADMIN, MANAGER, SALES, EMPLOYEE), replacing the Phase 4 single `users.role` column — see §0c. |
+| `permissions` ✅ (Phase 6) | Granular permissions (e.g. `CUSTOMER_READ`, `AI_USE`) — fixed catalog of 16, per CLAUDE.md §9. |
+| `user_roles` ✅ (Phase 6) | Join table assigning roles to users (composite PK, no `BaseEntity`). |
+| `role_permissions` ✅ (Phase 6, not in original CLAUDE.md list) | Join table assigning permissions to roles (composite PK, no `BaseEntity`) — see §0c for why this wasn't in the original entity list. |
 | `customers` | CRM customer records. |
 | `leads` | Sales leads, with status/source/priority. |
 | `lead_activities` | Activity/history log per lead. |

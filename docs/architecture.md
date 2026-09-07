@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 5 — organizations (tenant root) and tenant isolation exist and are validated end-to-end, on top of Phase 4 (authentication & identity), Phase 3 (database foundation), and Phase 2 (backend foundation). Business modules (`crm`, `sales`, `products`, `documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 6 — junction-table RBAC (`roles`, `permissions`, `user_roles`, `role_permissions`) exists and is enforced via Spring Security method security, on top of Phase 5 (organizations & tenant isolation), Phase 4 (authentication & identity), Phase 3 (database foundation), and Phase 2 (backend foundation). Business modules (`crm`, `sales`, `products`, `documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -31,6 +31,16 @@
 - **Cross-module dependency shape**: `identity` → `organization` (registration needs `OrganizationService` to provision a tenant) and `organization` → `security` (`TenantContext` needs `CurrentUserProvider`/`UserPrincipal`). `security` itself has no direct dependency on `organization` — `AuthService` only ever touches `Organization` indirectly, via `User.getOrganization().getId()`. This keeps the layering acyclic in practice even though, at the whole-system level, tenancy and identity are inherently intertwined.
 - The JWT now carries an `orgId` claim alongside `sub`/`role`, so `TenantContext` never needs a database lookup to resolve the current tenant, consistent with the no-DB-hit-per-request design from Phase 4.
 - Full detail (tenant resolution mechanism, isolation guarantees, the mandatory cross-tenant test scenario) is in [security.md](security.md) and [database.md](database.md).
+
+## 1e. RBAC Foundation (Phase 6)
+
+- **`identity` module** gains `Role`/`Permission` entities and `RoleRepository`/`PermissionRepository`. `User.roles` is now a `@ManyToMany` set (replacing the Phase 4 single `role` column); `Role.permissions` is a `@ManyToMany` set to `Permission`. Both relationships are `FetchType.LAZY`, accessed only inside an enclosing transaction (`open-in-view: false`).
+- **No new module was introduced** — RBAC entities live in `identity` (which already owned `User`) rather than a separate `rbac` module; CLAUDE.md's module list has no dedicated RBAC package, and splitting it out would be a module purely for two small entity classes tightly coupled to `User`.
+- **Authorization enforcement is Spring Security method security**, not a bespoke authorization service: `@PreAuthorize("hasAuthority('CUSTOMER_READ')")` for permission checks, `@PreAuthorize("hasRole('ADMIN')")` still available for admin-style checks — both read from the same `GrantedAuthority` set built once per request in `JwtAuthenticationFilter`. No separate `AuthorizationService` abstraction was introduced; Spring's own method security already covers every case this phase needs.
+- **Authorities are resolved once, at token issuance** (`security.AuthService.resolveAuthorities`), from the authoritative DB state (`user.getRoles()` → `ROLE_<name>` + each role's `getPermissions()` → raw permission name), and embedded in the JWT's `authorities` claim. `JwtAuthenticationFilter` builds the request's `GrantedAuthority` set directly from that claim — zero database lookups per authenticated request, preserving the Phase 4 no-DB-hit-per-request design. This means a role/permission change takes effect only on the next login or `/refresh`, not on already-issued access tokens (bounded by the access token's short TTL) — see [security.md](security.md) for the full staleness rationale.
+- **RBAC and tenant resolution are fully independent JWT claims** (`authorities` vs `orgId`) — a permission never provides an alternate path to another organization's data; both checks are required together, never substitutable for each other. Verified in `RbacAuthorizationTests.havingThePermissionNeverGrantsAccessToAnotherOrganizationsData`.
+- No role/permission-assignment REST API was added this phase — CLAUDE.md doesn't assign such an endpoint to Phase 6, and adding one would need its own authorization/audit design. Role changes in this phase happen only via direct DB manipulation (as done in tests) or the Flyway seed data.
+- Full detail (role/permission catalog, the role→permission mapping decision, privilege-escalation analysis) is in [security.md](security.md); schema detail is in [database.md](database.md).
 
 ## 1. Style
 
@@ -77,7 +87,7 @@ Each module owns its own controller/service/repository/entity/dto/mapper/excepti
 |---|---|
 | `common` | Shared utilities, base entities, pagination helpers, cross-cutting configuration |
 | `security` | Authentication, JWT issuance/validation, security filters, password handling |
-| `identity` | Users, roles, permissions, user-role assignment |
+| `identity` | Users, roles, permissions, user-role assignment ✅ (Phase 6) |
 | `organization` | Organizations and multi-tenancy context resolution |
 | `crm` | Customers, customer activities/notes |
 | `sales` | Leads, quotations, invoices, sales pipeline |

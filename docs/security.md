@@ -1,6 +1,6 @@
 # Security
 
-> Status: Phase 5 — organizations (tenant root) and tenant isolation are implemented and validated, on top of Phase 4 authentication (registration, login, JWT access tokens, refresh-token rotation with reuse detection, logout). Full granular RBAC (permission catalog, `roles`/`permissions`/`user_roles` tables) remains Phase 6. Email verification and forgot/reset-password are acknowledged CLAUDE.md requirements **not yet implemented** — deferred to a later authentication pass (see §1a).
+> Status: Phase 6 — full RBAC (roles, permissions, `user_roles`/`role_permissions`) is implemented and validated, on top of Phase 5 (organizations/tenant isolation) and Phase 4 (authentication). Email verification and forgot/reset-password are acknowledged CLAUDE.md requirements **not yet implemented** — deferred to a later authentication pass (see §1a).
 
 Priority order for this entire project: **Security > Correctness > Maintainability > Testability > Performance > Convenience.**
 
@@ -18,13 +18,13 @@ Priority order for this entire project: **Security > Correctness > Maintainabili
 
 - **Endpoints**: `POST /api/v1/auth/register`, `/login`, `/refresh`, `/logout`, `GET /api/v1/auth/me` (current user).
 - **Password hashing**: BCrypt (`BCryptPasswordEncoder`).
-- **Access tokens**: JWT (HS256), claims limited to `sub` (user id) and `role` — no email/PII in the token payload. Signing secret comes from `JWT_SECRET` (required, ≥32 bytes, no default — fails fast at startup otherwise). Short lifetime via `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` (default 15).
+- **Access tokens**: JWT (HS256), claims limited to `sub` (user id), `orgId`, and `authorities` (Phase 6: the resolved Spring Security authority set — see §2a) — no email/PII in the token payload. Signing secret comes from `JWT_SECRET` (required, ≥32 bytes, no default — fails fast at startup otherwise). Short lifetime via `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` (default 15).
 - **Refresh tokens**: opaque, cryptographically random (256-bit) values — *not* JWTs. Only their SHA-256 hash is ever persisted (`refresh_tokens.token_hash`); the raw value is returned to the client exactly once. Lifetime via `JWT_REFRESH_TOKEN_EXPIRATION_DAYS` (default 7).
 - **Rotation + reuse detection**: every `/refresh` call revokes the presented token and issues a new one. Presenting an already-revoked (previously-rotated) token is treated as a signal of token theft and revokes *every* active refresh token for that user — implemented as its own `REQUIRES_NEW` transaction so the revocation survives regardless of the exception subsequently thrown for the reuse attempt.
 - **Login enumeration resistance**: login never distinguishes "unknown email" from "wrong password" — both return a generic `401 INVALID_CREDENTIALS`. A fixed, precomputed BCrypt hash is compared against when no user is found, so the response time doesn't leak whether an email is registered.
 - **Account-status leakage prevention**: password is verified *before* account status (`ACTIVE`/`DISABLED`/`LOCKED`) is checked, so a disabled/locked account's status is never revealed to someone who doesn't already know the password (both return `401` for a wrong password regardless of status; only a *correct* password against a non-active account returns `403 ACCOUNT_DISABLED`/`ACCOUNT_LOCKED`).
 - **No password/token logging**: verified — no code path logs raw passwords, password hashes, JWTs, or raw refresh tokens.
-- **Default role on registration**: every self-registered user gets `role=EMPLOYEE`, `status=ACTIVE` — least-privilege default. Proper role assignment/invite flows arrive with full RBAC (Phase 6).
+- **Default role on registration**: every self-registered user gets the `EMPLOYEE` role (looked up from the Phase 6 seed data), `status=ACTIVE` — least-privilege default.
 - **Not yet implemented** (acknowledged CLAUDE.md §8 gaps): email verification, forgot-password, reset-password. Account lockout (`LOCKED`) is a valid, checked state but nothing currently transitions a user into it automatically — that arrives with rate-limiting/brute-force protection (CLAUDE.md §26).
 
 ## 2. Authorization (RBAC)
@@ -33,8 +33,27 @@ Priority order for this entire project: **Security > Correctness > Maintainabili
 - Permissions are granular (e.g. `CUSTOMER_READ`, `CUSTOMER_CREATE`, `AI_USE`, `USER_MANAGE`).
 - **Authorization is enforced in the backend only.** Frontend permission checks exist purely for UX (hiding buttons) and carry zero security weight.
 - Every controller/service method that touches sensitive or tenant-scoped data must have an explicit authorization check.
-- **Phase 4 foundation**: each user has exactly one `role` (single column, not yet the full `roles`/`permissions`/`user_roles` junction schema). The JWT carries the role as a Spring Security authority (`ROLE_<name>`), and `@EnableMethodSecurity` + `@PreAuthorize("hasRole(...)")` is wired and verified working end-to-end. The granular per-permission catalog (`CUSTOMER_READ`, etc.) is Phase 6 scope.
 - **Current user**: `security.CurrentUserProvider` lets any service ask "who is making this request?" from the `SecurityContextHolder` without parsing JWTs directly — future modules should depend on this rather than duplicating token-parsing logic.
+
+### 2a. Implementation Notes (Phase 6)
+
+- **Model**: `roles`, `permissions`, `user_roles`, `role_permissions` (CLAUDE.md §6) — a genuine many-to-many at both levels (`identity.entity.Role`/`Permission`, `User.roles`). This **replaced** the single `users.role` column from Phase 4 in the same migration (V4) that introduces the new tables — one authoritative source, never two competing ones. The schema technically permits multiple roles per user, but nothing in this phase assigns more than one by default (registration still assigns exactly `EMPLOYEE`).
+- **Seed data**: the 5 roles and the full permission catalog from CLAUDE.md §9 are seeded by Flyway (V4), not application startup code — deterministic, versioned, and consistent with how every other schema change in this project is made (CLAUDE.md §33).
+- **Role → permission mapping** (an implementation decision — CLAUDE.md defines roles and permission names but not this mapping):
+
+  | Role | Permissions |
+  |---|---|
+  | `OWNER`, `ADMIN` | Full catalog (all 16 permissions). No permission exists yet — e.g. billing, organization deletion — that would meaningfully distinguish OWNER from ADMIN; revisit when one is introduced. |
+  | `MANAGER` | Full CRUD on customers/leads/quotations, `DOCUMENT_READ`/`DOCUMENT_UPLOAD`, `AI_USE`. No `USER_MANAGE`. |
+  | `SALES` | Read/create/update (no delete) on customers/leads/quotations, `DOCUMENT_READ`/`DOCUMENT_UPLOAD`, `AI_USE`. No `USER_MANAGE`. |
+  | `EMPLOYEE` | Read-only on customers/leads/quotations/documents, plus `AI_USE` — matches the least-privilege self-registration default. |
+
+  Since the underlying resources (customers, leads, quotations, documents) don't exist until Phase 7+, this mapping is enforced in the seed data and provable via `@PreAuthorize("hasAuthority(...))")`, but has nothing real to gate yet except the two test-only endpoints used to verify the mechanism.
+- **JWT integration**: the access token's `authorities` claim is the user's fully-resolved Spring Security authority set — both `ROLE_<name>` (role authorities, keeping `hasRole(...)` working unchanged from Phase 4) and raw permission names (e.g. `CUSTOMER_READ`, enabling `hasAuthority(...)`). It's computed once, at login/refresh time, from the *current* database state (`AuthService.resolveAuthorities`) — never carried forward from a previous token. This keeps the established "no database lookup per authenticated request" design: `JwtAuthenticationFilter` builds `GrantedAuthority`s directly from this claim.
+- **No staleness beyond one token lifetime**: because authorities are re-resolved on every refresh (not just login), a role grant or revocation takes effect on the *next* refresh call, not just the next full login — the same pattern already used for account-status changes (`AccountNotActiveException` check in `RefreshTokenService.rotate`). The maximum staleness window for an already-issued, not-yet-refreshed access token is bounded by `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` (15 minutes by default).
+- **No caching layer**: per the project's explicit "don't introduce Redis just for RBAC" guidance — authorities are computed from the relational model on each login/refresh (a handful of small in-memory collection operations, no extra query beyond what JPA already needs to load the association), which is simple and fast enough without a cache.
+- **No role/permission-assignment API**: there is no endpoint anywhere that lets a client assign, modify, or query someone else's roles/permissions. Role changes in this phase are only possible via direct database/repository action (what an eventual admin-only user-management feature, `USER_MANAGE`-gated, would do in a later phase) — there is currently no public attack surface for privilege escalation to target.
+- **Method security**: `@EnableMethodSecurity` (already enabled since Phase 4) + `@PreAuthorize("hasRole(...)")` / `@PreAuthorize("hasAuthority(...)")`, verified end-to-end against two test-only endpoints (`security.RoleProtectedTestController`, never shipped to production — same pattern as Phase 3's `SampleEntity` fixture).
 
 ## 3. Multi-Tenancy / Tenant Isolation
 
@@ -50,7 +69,8 @@ Priority order for this entire project: **Security > Correctness > Maintainabili
 - **Resolution mechanism**: `organization.TenantContext.currentOrganizationId()` is the *only* way application code determines the current tenant. It reads `organizationId` off `security.UserPrincipal`, which `JwtAuthenticationFilter` builds entirely from the validated JWT's `orgId` claim — no database lookup, and no path through which a request parameter, body field, or header could ever be substituted. `organization.service.OrganizationService.getCurrentOrganization()` is the only service method that resolves an `Organization` for a controller, and it exclusively uses `TenantContext` — there is deliberately no "get organization by arbitrary id" method reachable from a controller (CLAUDE.md §7, project spec §11).
 - **API surface**: exactly one endpoint, `GET /api/v1/organizations/current` — it accepts no organization id from the client in any form. This was verified with an explicit test that sends another organization's id via both a header (`X-Organization-Id`) and a query parameter and confirms the response is unaffected (`TenantIsolationTests`).
 - **No "user without an organization" case**: the NOT NULL constraint plus mandatory provisioning at registration mean this state cannot occur in this design — not tested, since there's nothing to trigger it (see `docs/database.md §0b` for the reasoning).
-- **Malformed-claim safety**: `JwtAuthenticationFilter.authenticate` wraps claim extraction (`sub`/`role`/`orgId`) in a try/catch — a validly-signed token with a missing or malformed claim (e.g. one minted before the `orgId` claim existed) is treated exactly like any other invalid token (left unauthenticated → `401`), never an uncaught exception that would bypass the standard `ApiError` envelope. Covered by an explicit regression test (`AuthenticationFlowTests.meWithValidSignatureButMissingOrganizationClaimReturns401NotAServerError`).
+- **Malformed-claim safety**: `JwtAuthenticationFilter.authenticate` wraps claim extraction (`sub`/`orgId`/`authorities`) in a try/catch — a validly-signed token with a missing or malformed claim (e.g. one minted before a claim existed) is treated exactly like any other invalid token (left unauthenticated → `401`), never an uncaught exception that would bypass the standard `ApiError` envelope. Covered by an explicit regression test (`AuthenticationFlowTests.meWithValidSignatureButMissingOrganizationClaimReturns401NotAServerError`).
+- **RBAC + tenant isolation together (Phase 6)**: these are independent, both-required checks — `@PreAuthorize` decides *whether* an action is permitted at all; `TenantContext` decides *whose* data it applies to. Neither can substitute for the other: holding a permission (e.g. `CUSTOMER_READ`) never provides a way to read another organization's data, since the resolved organization id still comes only from the JWT, never from anything permission-related. Verified explicitly by `RbacAuthorizationTests.havingThePermissionNeverGrantsAccessToAnotherOrganizationsData`.
 
 ## 4. AI-Specific Security
 

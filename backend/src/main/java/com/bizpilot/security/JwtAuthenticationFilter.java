@@ -1,7 +1,6 @@
 package com.bizpilot.security;
 
 import com.bizpilot.security.jwt.JwtService;
-import com.bizpilot.identity.entity.UserRole;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
 import jakarta.servlet.FilterChain;
@@ -16,9 +15,10 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Validates the {@code Authorization: Bearer <token>} header on every request
@@ -60,10 +60,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private void authenticate(Jws<Claims> claims) {
         try {
             UUID userId = jwtService.extractUserId(claims);
-            UserRole role = jwtService.extractRole(claims);
             UUID organizationId = jwtService.extractOrganizationId(claims);
-            UserPrincipal principal = new UserPrincipal(userId, role, organizationId);
-            List<GrantedAuthority> authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));
+            Set<String> authorityNames = jwtService.extractAuthorities(claims);
+            UserPrincipal principal = new UserPrincipal(userId, organizationId, authorityNames);
+
+            Set<GrantedAuthority> authorities = authorityNames.stream()
+                    .map(SimpleGrantedAuthority::new)
+                    .collect(Collectors.toUnmodifiableSet());
 
             var authentication = new UsernamePasswordAuthenticationToken(principal, null, authorities);
             SecurityContextHolder.getContext().setAuthentication(authentication);

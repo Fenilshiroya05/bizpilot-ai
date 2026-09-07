@@ -1,6 +1,7 @@
 package com.bizpilot.security;
 
 import com.bizpilot.identity.dto.UserResponse;
+import com.bizpilot.identity.entity.Role;
 import com.bizpilot.identity.entity.User;
 import com.bizpilot.identity.entity.UserStatus;
 import com.bizpilot.identity.mapper.UserMapper;
@@ -20,7 +21,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -108,8 +111,28 @@ public class AuthService {
     }
 
     private AuthResponse buildAuthResponse(User user, String rawRefreshToken) {
-        String accessToken = jwtService.generateAccessToken(user.getId(), user.getRole(), user.getOrganization().getId());
+        Set<String> authorities = resolveAuthorities(user);
+        String accessToken = jwtService.generateAccessToken(user.getId(), user.getOrganization().getId(), authorities);
         long expiresInSeconds = jwtService.getAccessTokenTtl().toSeconds();
         return AuthResponse.of(accessToken, rawRefreshToken, expiresInSeconds, userMapper.toResponse(user));
+    }
+
+    /**
+     * Resolves the full set of Spring Security authorities (role authorities,
+     * {@code ROLE_<name>}, plus permission-name authorities like
+     * {@code CUSTOMER_READ}) from the user's <em>current</em> roles and their
+     * permissions — always read fresh from the database here (never carried
+     * forward from a prior token), so a role/permission change takes effect
+     * on the next login or refresh, not just at the next full re-login. This
+     * mirrors how account status is already re-checked on every refresh
+     * (see {@code RefreshTokenService.rotate}).
+     */
+    private Set<String> resolveAuthorities(User user) {
+        Set<String> authorities = new HashSet<>();
+        for (Role role : user.getRoles()) {
+            authorities.add("ROLE_" + role.getName());
+            role.getPermissions().forEach(permission -> authorities.add(permission.getName()));
+        }
+        return authorities;
     }
 }

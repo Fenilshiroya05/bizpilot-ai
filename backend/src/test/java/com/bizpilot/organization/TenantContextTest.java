@@ -1,6 +1,5 @@
 package com.bizpilot.organization;
 
-import com.bizpilot.identity.entity.UserRole;
 import com.bizpilot.security.CurrentUserProvider;
 import com.bizpilot.security.UserPrincipal;
 import org.junit.jupiter.api.Test;
@@ -9,6 +8,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -24,7 +24,7 @@ class TenantContextTest {
     @Test
     void resolvesTheOrganizationIdFromTheAuthenticatedPrincipal() {
         UUID organizationId = UUID.randomUUID();
-        UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), UserRole.EMPLOYEE, organizationId);
+        UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), organizationId, Set.of("ROLE_EMPLOYEE"));
         when(currentUserProvider.getCurrentUser()).thenReturn(Optional.of(principal));
 
         TenantContext tenantContext = new TenantContext(currentUserProvider);

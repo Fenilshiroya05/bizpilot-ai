@@ -2,9 +2,11 @@ package com.bizpilot.security;
 
 import com.bizpilot.TestcontainersConfiguration;
 import com.bizpilot.common.response.ApiError;
+import com.bizpilot.identity.entity.Role;
 import com.bizpilot.identity.entity.User;
 import com.bizpilot.identity.entity.UserRole;
 import com.bizpilot.identity.entity.UserStatus;
+import com.bizpilot.identity.repository.RoleRepository;
 import com.bizpilot.identity.repository.UserRepository;
 import com.bizpilot.organization.entity.Organization;
 import com.bizpilot.organization.repository.OrganizationRepository;
@@ -34,6 +36,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Date;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -54,6 +57,9 @@ class AuthenticationFlowTests {
 
     @Autowired
     private OrganizationRepository organizationRepository;
+
+    @Autowired
+    private RoleRepository roleRepository;
 
     @Autowired
     private PasswordEncoder passwordEncoder;
@@ -216,7 +222,7 @@ class AuthenticationFlowTests {
     @Test
     void meWithValidTokenReturnsCurrentUserProfile() {
         User user = registerDirect("heidi@example.com", "Passw0rd!", "Heidi", "Fox", UserRole.EMPLOYEE, UserStatus.ACTIVE);
-        String accessToken = jwtService.generateAccessToken(user.getId(), user.getRole(), user.getOrganization().getId());
+        String accessToken = jwtService.generateAccessToken(user.getId(), user.getOrganization().getId(), roleAuthority(UserRole.EMPLOYEE));
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
@@ -317,7 +323,7 @@ class AuthenticationFlowTests {
     @Test
     void adminOnlyEndpointAllowsAdminRole() {
         User admin = registerDirect("laura@example.com", "Passw0rd!", "Laura", "Byrne", UserRole.ADMIN, UserStatus.ACTIVE);
-        String token = jwtService.generateAccessToken(admin.getId(), admin.getRole(), admin.getOrganization().getId());
+        String token = jwtService.generateAccessToken(admin.getId(), admin.getOrganization().getId(), roleAuthority(UserRole.ADMIN));
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -330,7 +336,7 @@ class AuthenticationFlowTests {
     @Test
     void adminOnlyEndpointForbidsNonAdminRole() {
         User employee = registerDirect("mallory@example.com", "Passw0rd!", "Mallory", "Cruz", UserRole.EMPLOYEE, UserStatus.ACTIVE);
-        String token = jwtService.generateAccessToken(employee.getId(), employee.getRole(), employee.getOrganization().getId());
+        String token = jwtService.generateAccessToken(employee.getId(), employee.getOrganization().getId(), roleAuthority(UserRole.EMPLOYEE));
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -353,7 +359,14 @@ class AuthenticationFlowTests {
     private User registerDirect(String email, String rawPassword, String firstName, String lastName,
                                  UserRole role, UserStatus status) {
         Organization organization = organizationRepository.save(new Organization(firstName + "'s Test Org"));
-        User user = new User(email, passwordEncoder.encode(rawPassword), firstName, lastName, role, status, organization);
+        Role roleEntity = roleRepository.findByName(role.name())
+                .orElseThrow(() -> new IllegalStateException("RBAC seed data missing: role " + role.name()));
+        User user = new User(email, passwordEncoder.encode(rawPassword), firstName, lastName, status, organization, roleEntity);
         return userRepository.save(user);
+    }
+
+    /** Minimal authorities for tests that mint a token directly rather than via login. */
+    private Set<String> roleAuthority(UserRole role) {
+        return Set.of("ROLE_" + role.name());
     }
 }

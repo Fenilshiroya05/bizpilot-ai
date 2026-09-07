@@ -202,7 +202,7 @@ curl -s -X POST http://localhost:8080/api/v1/auth/logout \
   -d "{\"refreshToken\":\"$REFRESH_TOKEN\"}"
 ```
 
-New users register with `role=EMPLOYEE`, `status=ACTIVE`, and a brand-new organization (named after `organizationName`) by default — every other endpoint besides `/register`, `/login`, `/refresh`, and `/actuator/health` requires a valid `Authorization: Bearer <accessToken>` header. The current organization is always derived from that token, never from client input. See [docs/security.md](docs/security.md) for the full token/security/tenancy model.
+New users register with `roles=["EMPLOYEE"]`, `status=ACTIVE`, and a brand-new organization (named after `organizationName`) by default — every other endpoint besides `/register`, `/login`, `/refresh`, and `/actuator/health` requires a valid `Authorization: Bearer <accessToken>` header. The current organization is always derived from that token, never from client input. See [docs/security.md](docs/security.md) for the full token/security/tenancy model.
 
 ## Running the Frontend
 

@@ -1,11 +1,11 @@
 package com.bizpilot.security.jwt;
 
-import com.bizpilot.identity.entity.UserRole;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -19,24 +19,25 @@ class JwtServiceTest {
     }
 
     @Test
-    void generatesTokenThatParsesBackToTheSameUserRoleAndOrganization() {
+    void generatesTokenThatParsesBackToTheSameUserOrganizationAndAuthorities() {
         JwtService jwtService = serviceWith(15);
         UUID userId = UUID.randomUUID();
         UUID organizationId = UUID.randomUUID();
+        Set<String> authorities = Set.of("ROLE_ADMIN", "USER_MANAGE", "CUSTOMER_READ");
 
-        String token = jwtService.generateAccessToken(userId, UserRole.ADMIN, organizationId);
+        String token = jwtService.generateAccessToken(userId, organizationId, authorities);
         Optional<Jws<Claims>> parsed = jwtService.parseAndValidate(token);
 
         assertThat(parsed).isPresent();
         assertThat(jwtService.extractUserId(parsed.get())).isEqualTo(userId);
-        assertThat(jwtService.extractRole(parsed.get())).isEqualTo(UserRole.ADMIN);
         assertThat(jwtService.extractOrganizationId(parsed.get())).isEqualTo(organizationId);
+        assertThat(jwtService.extractAuthorities(parsed.get())).isEqualTo(authorities);
     }
 
     @Test
     void rejectsExpiredToken() {
         JwtService jwtService = serviceWith(-1); // already expired the instant it's issued
-        String token = jwtService.generateAccessToken(UUID.randomUUID(), UserRole.EMPLOYEE, UUID.randomUUID());
+        String token = jwtService.generateAccessToken(UUID.randomUUID(), UUID.randomUUID(), Set.of("ROLE_EMPLOYEE"));
 
         assertThat(jwtService.parseAndValidate(token)).isEmpty();
     }
@@ -53,7 +54,7 @@ class JwtServiceTest {
         JwtService issuer = new JwtService(new JwtProperties("issuer-secret-1234567890-1234567890abcd", 15, 7));
         JwtService verifier = new JwtService(new JwtProperties("verifier-secret-1234567890-1234567890abc", 15, 7));
 
-        String token = issuer.generateAccessToken(UUID.randomUUID(), UserRole.OWNER, UUID.randomUUID());
+        String token = issuer.generateAccessToken(UUID.randomUUID(), UUID.randomUUID(), Set.of("ROLE_OWNER"));
 
         assertThat(verifier.parseAndValidate(token)).isEmpty();
     }

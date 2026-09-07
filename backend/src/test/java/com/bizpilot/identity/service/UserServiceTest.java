@@ -1,11 +1,14 @@
 package com.bizpilot.identity.service;
 
+import com.bizpilot.identity.entity.Role;
 import com.bizpilot.identity.entity.User;
 import com.bizpilot.identity.entity.UserRole;
 import com.bizpilot.identity.entity.UserStatus;
 import com.bizpilot.identity.exception.EmailAlreadyExistsException;
+import com.bizpilot.identity.repository.RoleRepository;
 import com.bizpilot.identity.repository.UserRepository;
 import com.bizpilot.organization.entity.Organization;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,6 +16,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
+
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -27,12 +32,23 @@ class UserServiceTest {
     private UserRepository userRepository;
 
     @Mock
+    private RoleRepository roleRepository;
+
+    @Mock
     private PasswordEncoder passwordEncoder;
 
     private final Organization organization = new Organization("Test Org");
+    private final Role employeeRole = new Role(UserRole.EMPLOYEE.name());
+
+    @BeforeEach
+    void setUp() {
+        // Not every test reaches the role lookup (e.g. duplicate-email short-circuits
+        // before it), so this is lenient rather than stubbed per-test.
+        lenient().when(roleRepository.findByName(UserRole.EMPLOYEE.name())).thenReturn(Optional.of(employeeRole));
+    }
 
     private UserService userService() {
-        return new UserService(userRepository, passwordEncoder);
+        return new UserService(userRepository, roleRepository, passwordEncoder);
     }
 
     @Test
@@ -70,7 +86,7 @@ class UserServiceTest {
 
         User user = userService().register("a@example.com", "MyPassw0rd", "A", "B", organization);
 
-        assertThat(user.getRole()).isEqualTo(UserRole.EMPLOYEE);
+        assertThat(user.getRoles()).containsExactly(employeeRole);
         assertThat(user.getStatus()).isEqualTo(UserStatus.ACTIVE);
         assertThat(user.getOrganization()).isEqualTo(organization);
     }
@@ -96,5 +112,16 @@ class UserServiceTest {
 
         assertThatThrownBy(() -> userService().register("raced@example.com", "MyPassw0rd", "A", "B", organization))
                 .isInstanceOf(EmailAlreadyExistsException.class);
+    }
+
+    @Test
+    void registrationFailsSafelyIfRbacSeedDataIsMissing() {
+        when(userRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
+        when(roleRepository.findByName(UserRole.EMPLOYEE.name())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService().register("a@example.com", "MyPassw0rd", "A", "B", organization))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(userRepository, never()).saveAndFlush(any());
     }
 }
