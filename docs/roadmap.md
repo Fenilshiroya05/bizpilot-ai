@@ -18,7 +18,7 @@ Status legend: `[x]` complete · `[ ]` not started.
 | 10 | Quotations | [x] |
 | 11 | Invoices | [x] |
 | 12 | Tasks | [x] |
-| 13 | Document management | [ ] |
+| 13 | Document management | [x] |
 | 14 | Spring AI foundation | [ ] |
 | 15 | RAG + PGVector | [ ] |
 | 16 | AI tool calling | [ ] |
@@ -200,6 +200,24 @@ No Payments/payment gateway, Tasks, Documents/storage, AI/RAG, AI assistant/tool
 - A dedicated security/code review found no critical/high/medium findings — every tenant-isolation, RBAC, and reference-validation control was reused directly from the already-hardened Phase 8/10/11 patterns. See [security.md §3j](security.md#3j-implementation-notes-phase-12--three-independent-reference-validations-no-immutability).
 
 No notifications, reminders, recurring tasks, calendar integration, scheduled jobs, AI task generation/prioritization, AI assistant integration, analytics, frontend, generic audit logging, task activities/history, or quotation/invoice relationships were added in Phase 12 — those belong to a later phase (or are never in scope for Tasks per CLAUDE.md §23).
+
+## Phase 13 — Completed Scope
+
+- `documents` module gains `entity/Document`, `entity/DocumentStatus` (UPLOADED/PROCESSING/COMPLETED/FAILED — fixed exactly by CLAUDE.md §16, though only UPLOADED is ever persisted in Phase 13), `repository/DocumentRepository`, `dto/DocumentResponse`, `mapper/DocumentMapper`, `service/DocumentService`, `service/DocumentValidator` (pure, dependency-free upload validation), `service/DocumentSearchCriteria`, `service/DocumentContent`, `service/DocumentStorageService` (storage abstraction interface) + `service/LocalDocumentStorageService` (its only implementation), `controller/DocumentController` (`/api/v1/documents`), and dedicated exceptions (`DocumentNotFoundException`, `InvalidDocumentException`, `DocumentStorageException`).
+- **Storage abstraction with only a local filesystem implementation** (CLAUDE.md §16) — `DocumentStorageService` is designed to be S3-swappable later, but no S3/MinIO client or infrastructure was added this phase, since nothing yet requires it.
+- **`DOCUMENT_READ`/`DOCUMENT_UPLOAD` already existed** since Phase 6 (V4) and were left untouched; only `DOCUMENT_DELETE` is new (`V11`), restricted to OWNER/ADMIN/MANAGER — the narrowest permission of any resource so far (not even SALES gets it), since documents may contain sensitive business files.
+- **No metadata-update endpoint and no `DOCUMENT_UPDATE` permission** — CLAUDE.md §16 defines no metadata-update feature for documents at all.
+- **No business-entity associations** — CLAUDE.md §16 names none (a clean absence, unlike Task's explicit customer/lead associations); `uploaded_by_user_id` is the only reference, a plain UUID attribution field.
+- **Mandatory, layered upload validation**: extension + declared `Content-Type` + magic-byte signature (PDF/DOCX) must all agree; a mismatch or spoofed executable is rejected with `400 INVALID_DOCUMENT`. Filenames are sanitized (path-traversal/control-character stripping), not rejected, since they're never used as a filesystem path.
+- **20 MB upload limit**, enforced primarily via `spring.servlet.multipart.max-file-size`/`max-request-size` and backed by an application-level check + DB `CHECK` constraint for defense in depth.
+- **First hard delete in the project**: physical file and database row are both genuinely removed (storage-first, then DB-row, so a DB-delete failure is self-healing via idempotent retry) — CLAUDE.md §16 gives documents no soft-delete-style status value, and the approved decision explicitly ruled out inventing one.
+- Endpoints under `/api/v1/documents`: upload (`POST`, multipart), get metadata, list/search/filter/paginate (status, content type, uploader, filename search), download (streamed via `Resource`, safe RFC 6266 `Content-Disposition`), delete (`DELETE`, hard).
+- Mandatory tests: `DocumentValidatorTest` (25 pure unit tests), `LocalDocumentStorageServiceTest` (6 tests against a real temp directory), `DocumentServiceTest` (19 Mockito tests, including storage/database-failure ordering and best-effort cleanup), `DocumentApiTests` (16 full-context tests, establishing this suite's first multipart-upload test pattern), `DocumentAuthorizationTests` (5 tests), `DocumentTenantIsolationTests` (7 tests) — 78 new tests, plus the expected `RoleSeedDataTests` update for `DOCUMENT_DELETE` (the same kind of update Phase 9/11/12 required for `PRODUCT_*`/`INVOICE_*`/`TASK_*`). Full suite: 491 backend tests passing, confirming no regression to Phases 1–12.
+- Manual `docker-compose` end-to-end validation performed (see final report for details), including a real 21 MB oversized upload, MIME/signature spoofing, path-traversal filename sanitization, and a physical-file-count-vs-database-row-count cross-check after delete.
+- A dedicated security/code review found no critical/high/medium findings.
+- Docker: added a `document_storage` named volume mounted at `/app/uploads`, with the Dockerfile pre-creating and `chown`-ing that directory to the non-root runtime user before the volume is first attached. No MinIO/S3/AWS service was added.
+
+No S3/MinIO implementation, document processing/text extraction/chunking/embeddings/vector storage/PGVector/RAG, AI document processing, document associations, metadata editing, versioning/replacement, preview/rendering, public URLs/sharing, notifications, generic audit logging, analytics, or frontend were added in Phase 13 — those belong to Phase 14/15 onward (or are never in scope for Documents per CLAUDE.md §16's Phase 13 boundary).
 
 ## Process Per Phase
 

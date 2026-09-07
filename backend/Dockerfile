@@ -17,6 +17,12 @@ WORKDIR /app
 
 RUN addgroup -S bizpilot && adduser -S bizpilot -G bizpilot
 COPY --from=build /app/target/bizpilot-backend.jar app.jar
+
+# Phase 13: local document storage root, pre-created and owned by the
+# runtime user before the named volume is first attached (docker-compose.yml
+# mounts document_storage here) so writes never fail on permissions.
+RUN mkdir -p /app/uploads && chown bizpilot:bizpilot /app/uploads
+
 USER bizpilot
 
 EXPOSE 8080

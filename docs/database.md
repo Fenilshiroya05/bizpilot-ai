@@ -1,6 +1,6 @@
 # Database
 
-> Status: Phase 12 — `tasks` exists (V10 migration), the first tenant-scoped table whose cross-module references (`assigned_to_user_id`, `customer_id`, `lead_id`) are all plain UUID FK columns rather than backing a JPA relationship, mirroring `leads.assigned_to_user_id` (Phase 8, V6). V10 also seeds new `TASK_*` permissions, following the Phase 9/V7 precedent, with a deliberately non-default role mapping (see §0i). Built on top of `invoices`/`invoice_items` (Phase 11, V9), `quotations`/`quotation_items` (Phase 10, V8), `products`/`product_categories` (Phase 9, V7), `leads`/`lead_activities` (Phase 8, V6), `customers`/`customer_activities` (Phase 7, V5), `roles`/`permissions`/`user_roles`/`role_permissions` (Phase 6, V4), `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 13 (documents), per `docs/roadmap.md`.
+> Status: Phase 13 — `documents` exists (V11 migration), the first table storing a locator (`storage_key`) for content that lives outside PostgreSQL entirely (CLAUDE.md §16's explicit "never store uploaded files directly in the database" prohibition) rather than any form of the data itself. Uses a `CHECK` constraint closing the content type to exactly the 3 supported formats. V11 adds only `DOCUMENT_DELETE` — `DOCUMENT_READ`/`DOCUMENT_UPLOAD` already existed since V4 (Phase 6) and are untouched. Built on top of `tasks` (Phase 12, V10), `invoices`/`invoice_items` (Phase 11, V9), `quotations`/`quotation_items` (Phase 10, V8), `products`/`product_categories` (Phase 9, V7), `leads`/`lead_activities` (Phase 8, V6), `customers`/`customer_activities` (Phase 7, V5), `roles`/`permissions`/`user_roles`/`role_permissions` (Phase 6, V4), `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 14, per `docs/roadmap.md`.
 
 ## 0. Implementation Notes (Phase 3)
 
@@ -103,6 +103,16 @@
 - **Non-default RBAC role mapping** (see docs/security.md §2g): unlike every prior resource's "SALES minus delete, EMPLOYEE read-only" default, `TASK_CREATE`/`TASK_UPDATE` are granted to EMPLOYEE and SALES as well — only `TASK_DELETE` is restricted to OWNER/ADMIN/MANAGER.
 - **Indexes**: `ix_tasks_organization_id`, `ix_tasks_organization_id_status`, `ix_tasks_assigned_to_user_id`, `ix_tasks_customer_id`, `ix_tasks_lead_id`, `ix_tasks_due_date`.
 
+## 0j. Implementation Notes (Phase 13)
+
+- `V11__create_documents.sql` adds a single `documents` table — **explicitly named** in the CLAUDE.md §6 initial-entity list — plus `DOCUMENT_DELETE`, the only new permission (`DOCUMENT_READ`/`DOCUMENT_UPLOAD` already existed since V4/Phase 6 and are untouched). No `document_versions`/`document_tags`/`document_comments`/`document_history` table — none required by CLAUDE.md §16, and no association table to any other business entity, since §16 defines none (unlike `tasks`, which references `customers`/`leads`).
+- **Binary content is never stored in Postgres** (CLAUDE.md §16, explicit prohibition) — `storage_key` is an opaque, server-generated locator (`organizations/{organizationId}/documents/{uuid}`) resolved through `documents.service.DocumentStorageService`, which in Phase 13 only has a local-filesystem implementation. `storage_key` is never derived from `original_filename` and carries a unique index (`ux_documents_storage_key`) since it's the sole identifier used to locate the physical file.
+- **`content_type` is a closed `CHECK` constraint of exactly 3 values** — PDF/TXT/DOCX (CLAUDE.md §16's "Supported initial formats"), enforced identically at the entity/service layer by `DocumentValidator`.
+- **`file_size` has both a lower and upper `CHECK` bound** (`> 0 AND <= 20971520`, i.e. 20 MB) — the same 20 MB ceiling is enforced first and primarily by `spring.servlet.multipart.max-file-size`/`max-request-size` (application.yml), with this `CHECK` and `DocumentValidator.MAX_FILE_SIZE_BYTES` as defense-in-depth for any code path that bypasses the servlet-level multipart resolver.
+- **`uploaded_by_user_id` is a plain UUID column**, not a JPA relationship — the same attribution-style-reference pattern as `tasks.assigned_to_user_id` (Phase 12)/`leads.assigned_to_user_id` (Phase 8); it is never used for authorization, only display.
+- **First hard delete**: unlike every prior "delete" (a status transition to `CANCELLED`/`ARCHIVED`), deleting a document physically removes both the stored file and the database row — CLAUDE.md §16 gives documents no terminal status value to transition to instead, and the approved Phase 13 decision explicitly rules out a soft-delete flag. Storage deletion happens before the database row deletion (the reverse of the upload ordering) specifically so a database-delete failure after a successful storage delete is self-healing on retry (`DocumentStorageService.delete` is idempotent) — see [security.md](security.md) §3k for the full ordering rationale on both upload and delete.
+- **Indexes**: `ux_documents_storage_key` (unique), `ix_documents_organization_id`, `ix_documents_organization_id_status`, `ix_documents_uploaded_by_user_id`, `ix_documents_content_type`.
+
 ## 1. Engine
 
 - **PostgreSQL** is the primary datastore.
@@ -142,7 +152,7 @@
 | `invoices` ✅ (Phase 11) | Invoices issued to customers — no discount, no quotation reference (see §0h). |
 | `invoice_items` ✅ (Phase 11) | Line items on an invoice, snapshotting product name/price/tax — see §0h. |
 | `tasks` ✅ (Phase 12) | Task management records, optionally linked to a customer/lead — see §0i. |
-| `documents` | Uploaded document metadata and processing status. |
+| `documents` ✅ (Phase 13) | Uploaded document metadata and processing status — no business-entity associations (see §0j). |
 | `document_chunks` | Chunked, embedded document text for RAG (PGVector column). |
 | `conversations` | AI assistant conversation sessions. |
 | `conversation_messages` | Individual messages within a conversation. |
@@ -192,7 +202,12 @@ tasks *──0..1 customers (optional)
 tasks *──0..1 leads (optional)
 tasks *──0..1 users (optional, via assigned_to_user_id)
 
-documents 1──* document_chunks
+-- documents has NO business-entity association at all (CLAUDE.md §16 names
+-- none — unlike tasks — see §0j); uploaded_by_user_id is a plain UUID
+-- attribution reference, same pattern as tasks.assigned_to_user_id.
+documents *──1 organizations
+documents *──0..1 users (optional, via uploaded_by_user_id)
+documents 1──* document_chunks -- Phase 15 (RAG) — not created in Phase 13
 
 conversations 1──* conversation_messages
 ```

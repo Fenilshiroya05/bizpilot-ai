@@ -81,6 +81,10 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       JWT_ACCESS_TOKEN_EXPIRATION_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRATION_MINUTES:-15}
       JWT_REFRESH_TOKEN_EXPIRATION_DAYS: ${JWT_REFRESH_TOKEN_EXPIRATION_DAYS:-7}
+      # Phase 13: local filesystem document storage only (CLAUDE.md §16) —
+      # no MinIO/S3 service is added; /app/uploads is backed by the named
+      # volume below so uploaded files survive a container restart.
+      DOCUMENT_STORAGE_PATH: ${DOCUMENT_STORAGE_PATH:-/app/uploads}
     env_file:
       - path: .env
         required: false
@@ -89,6 +93,8 @@ services:
         condition: service_healthy
     ports:
       - "8080:8080"
+    volumes:
+      - document_storage:/app/uploads
     # No dependency on redis/kafka yet — the Phase 3 backend foundation
     # doesn't talk to either. Those gain `depends_on` once wired in.
 
@@ -113,3 +119,4 @@ volumes:
   zookeeper_data:
   zookeeper_log:
   kafka_data:
+  document_storage:

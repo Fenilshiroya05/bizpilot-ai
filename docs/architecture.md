@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 12 — `tasks` is the first business module to be built as its own top-level package rather than folded into `sales`/`crm` (CLAUDE.md §42 assigns it a dedicated package), and the first tenant-scoped entity with no cross-module JPA relationships at all — its assignee/customer/lead references are plain UUID columns, mirroring `sales.entity.Lead.assignedToUserId`. Remaining business modules (`documents`, `ai`, `analytics`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 13 — `documents` is implemented with local filesystem storage behind a swappable `DocumentStorageService` abstraction (CLAUDE.md §16). The first module doing real file I/O and the first hard-delete in the project. Remaining business modules (`ai`, `analytics`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -100,6 +100,16 @@
 - **No notes/activity table** — CLAUDE.md §23 lists a single "Notes" feature bullet with no accompanying "activities"/"history" bullet (contrast Lead/Customer, which each list both), so `notes` is a single plain text column on `Task` itself.
 - Full detail is in [security.md](security.md) §2g/§3j and [database.md](database.md) §0i.
 
+## 1l. Document Foundation (Phase 13)
+
+- **`documents` module** gains `entity/Document`, `entity/DocumentStatus`, `repository/DocumentRepository`, `dto/DocumentResponse`, `mapper/DocumentMapper`, `service/DocumentService`, `service/DocumentValidator` (a pure, dependency-free upload-validation class, mirroring `sales.service.QuotationCalculator`'s architecture), `service/DocumentSearchCriteria`, `service/DocumentContent`, `service/DocumentStorageService` (the storage abstraction interface) + `LocalDocumentStorageService` (its only Phase 13 implementation), `controller/DocumentController` (`/api/v1/documents`), `exception/DocumentNotFoundException`/`InvalidDocumentException`/`DocumentStorageException`.
+- **First module doing real file I/O.** `DocumentStorageService` is a small, swappable abstraction (CLAUDE.md §16: "so local filesystem can be used for development and S3-compatible storage can be used in production") — business logic in `DocumentService` depends only on the interface, never on `java.nio.file.Files` directly. Only a local-filesystem implementation is built now; no S3/MinIO client exists, and none is added to `docker-compose.yml` — building one now, with no production deployment target decided, would be speculative infrastructure.
+- **First hard delete in the project.** Unlike Quotation/Invoice/Task's soft status-transition "delete," a deleted `Document`'s physical file and database row are both genuinely removed — CLAUDE.md §16 gives documents no status value analogous to `CANCELLED`, and the approved Phase 13 decision explicitly rules out inventing a soft-delete flag. Storage delete happens before the database row delete (the reverse of upload's ordering), making retries self-healing since storage deletion is idempotent — see [security.md](security.md) §3k.
+- **First mandatory content-validation pipeline.** `DocumentValidator` checks filename extension, declared `Content-Type`, and (for PDF/DOCX) a magic-byte signature all agree, closing the gap where a client could rename an arbitrary file to `.pdf` and lie about its `Content-Type` simultaneously. No heavyweight content-sniffing dependency (e.g. Apache Tika) was added — three fixed, simple formats don't justify one.
+- **No business-entity associations** — CLAUDE.md §16 names none (unlike Task's explicit "Related customer"/"Related lead"); a `Document` is a standalone, organization-owned file with only an attribution-style `uploadedByUserId` (plain UUID, mirroring `Lead.assignedToUserId`).
+- **RBAC**: `DOCUMENT_READ`/`DOCUMENT_UPLOAD` already existed since Phase 6 (V4) and are unmodified; only `DOCUMENT_DELETE` is new (V11), restricted to OWNER/ADMIN/MANAGER — narrower than Task's unusually permissive mapping, since documents may hold sensitive business files.
+- Full detail is in [security.md](security.md) §2h/§3k and [database.md](database.md) §0j.
+
 ## 1. Style
 
 BizPilot AI is built as a **modular monolith** on the backend, not a microservices system. Business capabilities are separated into clearly bounded Java packages (modules) inside a single Spring Boot application. This gives most of the maintainability benefits of modular design (clear boundaries, independent evolution, testability) without the operational overhead of distributed systems, which is not justified at this stage.
@@ -150,7 +160,7 @@ Each module owns its own controller/service/repository/entity/dto/mapper/excepti
 | `crm` | Customers, customer activities/notes ✅ (Phase 7) |
 | `sales` | Leads ✅ (Phase 8), quotations ✅ (Phase 10), invoices, sales pipeline |
 | `products` | Product catalog, categories ✅ (Phase 9) |
-| `documents` | Document upload, storage abstraction, text extraction, chunking |
+| `documents` | Document upload, metadata, local storage abstraction ✅ (Phase 13); text extraction/chunking deferred to Phase 15 |
 | `ai` | Spring AI integration: chat, embeddings, RAG, tool calling, conversation memory |
 | `analytics` | Dashboards, aggregated reporting |
 | `tasks` | Task management ✅ (Phase 12) |

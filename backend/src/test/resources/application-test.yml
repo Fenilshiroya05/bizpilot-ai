@@ -15,6 +15,14 @@ bizpilot:
     secret: test-only-jwt-secret-do-not-use-outside-automated-tests-1234567890
     access-token-expiration-minutes: 15
     refresh-token-expiration-days: 7
+  documents:
+    storage:
+      # OS temp directory — self-cleaning-ish, never pollutes the repo, and
+      # avoids any collision with a developer's own local `uploads/` (see
+      # application.yml). Shared across the whole test run (the single
+      # cached Spring context every @SpringBootTest test class reuses), which
+      # is fine since every storage key is already namespaced by a random UUID.
+      path: ${java.io.tmpdir}/bizpilot-test-documents
 
 logging:
   level:

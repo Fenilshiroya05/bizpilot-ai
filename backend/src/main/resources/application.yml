@@ -22,6 +22,17 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: false
+  servlet:
+    multipart:
+      # Primary, framework-level enforcement of the 20 MB document upload
+      # limit (CLAUDE.md §16) — requests exceeding this are rejected by
+      # Spring before a controller method is ever invoked. Kept as the
+      # single source of truth for the limit; DocumentValidator.MAX_FILE_SIZE_BYTES
+      # mirrors the same 20 MB value for the application-level check that
+      # still applies when DocumentService is exercised directly (e.g. unit
+      # tests bypass the servlet-level multipart resolver entirely).
+      max-file-size: 20MB
+      max-request-size: 20MB
 
 server:
   port: ${SERVER_PORT:8080}
@@ -31,6 +42,15 @@ bizpilot:
     secret: ${JWT_SECRET}
     access-token-expiration-minutes: ${JWT_ACCESS_TOKEN_EXPIRATION_MINUTES:15}
     refresh-token-expiration-days: ${JWT_REFRESH_TOKEN_EXPIRATION_DAYS:7}
+  documents:
+    storage:
+      # Local filesystem only in Phase 13 (CLAUDE.md §16) — resolved to an
+      # absolute path by LocalDocumentStorageService. "uploads" (relative to
+      # the working directory) matches the pre-existing backend/uploads/
+      # .gitignore entry from Phase 1. Overridden for Docker (an absolute
+      # container path backed by a named volume) and for tests (an OS temp
+      # directory) — see docker-compose.yml and application-test.yml.
+      path: ${DOCUMENT_STORAGE_PATH:uploads}
 
 management:
   endpoints:

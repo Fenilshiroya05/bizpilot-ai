@@ -5,6 +5,9 @@ import com.bizpilot.crm.exception.CustomerArchivedException;
 import com.bizpilot.crm.exception.CustomerNotFoundException;
 import com.bizpilot.crm.exception.DuplicateCustomerException;
 import com.bizpilot.crm.exception.InvalidCustomerDataException;
+import com.bizpilot.documents.exception.DocumentNotFoundException;
+import com.bizpilot.documents.exception.DocumentStorageException;
+import com.bizpilot.documents.exception.InvalidDocumentException;
 import com.bizpilot.identity.entity.UserStatus;
 import com.bizpilot.identity.exception.EmailAlreadyExistsException;
 import com.bizpilot.products.exception.DuplicateSkuException;
@@ -41,6 +44,8 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.HashMap;
@@ -414,6 +419,68 @@ public class GlobalExceptionHandler {
                 request.getRequestURI()
         );
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(DocumentNotFoundException.class)
+    public ResponseEntity<ApiError> handleDocumentNotFound(DocumentNotFoundException ex, HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.NOT_FOUND.value(),
+                "DOCUMENT_NOT_FOUND",
+                "Document not found",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+    }
+
+    @ExceptionHandler(InvalidDocumentException.class)
+    public ResponseEntity<ApiError> handleInvalidDocument(InvalidDocumentException ex, HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "INVALID_DOCUMENT",
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(DocumentStorageException.class)
+    public ResponseEntity<ApiError> handleDocumentStorage(DocumentStorageException ex, HttpServletRequest request) {
+        // Never pass ex.getMessage() through — it may reference an internal
+        // storage key, never a raw filesystem path, but is withheld from the
+        // client regardless (project instructions §26/§30). Logged
+        // server-side for diagnosis.
+        log.error("Document storage failure while processing request {}", request.getRequestURI(), ex);
+        ApiError body = ApiError.of(
+                HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                "DOCUMENT_STORAGE_ERROR",
+                "A storage error occurred while processing this document",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
+    }
+
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ApiError> handleMissingRequestPart(MissingServletRequestPartException ex,
+                                                                HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "VALIDATION_ERROR",
+                "Invalid request",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiError> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException ex,
+                                                                   HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.PAYLOAD_TOO_LARGE.value(),
+                "FILE_TOO_LARGE",
+                "File exceeds the maximum allowed size of 20 MB",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(body);
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

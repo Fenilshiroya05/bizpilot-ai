@@ -358,13 +358,37 @@ curl -s -X DELETE http://localhost:8080/api/v1/tasks/$TASK_ID -H "Authorization:
 
 Tasks live in their own top-level `tasks` module (not `sales`/`crm`), per CLAUDE.md's own architecture section. The assignee, customer, and lead references are plain UUID fields validated tenant-safe on every write — never trusted from the client — but are not JPA relationships, since nothing here ever needs to load the full referenced entity. See [docs/security.md](docs/security.md) and [docs/database.md](docs/database.md) for the full reasoning behind the non-default RBAC mapping and the no-immutability decision.
 
+### Documents (Phase 13)
+
+```bash
+# Upload a document (requires DOCUMENT_UPLOAD — PDF/TXT/DOCX only, up to 20 MB;
+# multipart/form-data with a single "file" part, no JSON metadata)
+curl -s -X POST http://localhost:8080/api/v1/documents \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@contract.pdf;type=application/pdf"
+
+# List/search/filter/paginate
+curl -s "http://localhost:8080/api/v1/documents?status=UPLOADED&contentType=application/pdf&page=0&size=20" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Download (streamed; safe Content-Disposition using the original filename)
+curl -s http://localhost:8080/api/v1/documents/$DOCUMENT_ID/download \
+  -H "Authorization: Bearer $TOKEN" -o downloaded.pdf
+
+# Delete (hard delete — the physical file and the metadata row are both
+# removed; requires DOCUMENT_DELETE, restricted to OWNER/ADMIN/MANAGER)
+curl -s -X DELETE http://localhost:8080/api/v1/documents/$DOCUMENT_ID -H "Authorization: Bearer $TOKEN"
+```
+
+Only PDF, TXT, and DOCX are accepted — the filename extension, declared `Content-Type`, and (for PDF/DOCX) a magic-byte signature must all agree, so an executable renamed to `.pdf` with a spoofed `Content-Type` header is still rejected. Storage is local filesystem only in this phase, behind a small, swappable `DocumentStorageService` abstraction (CLAUDE.md §16) — no S3/MinIO client exists yet, though the abstraction is designed so one can be added later without changing any calling code. Documents have no association with customers/leads/quotations/invoices/tasks (CLAUDE.md §16 names none) and no metadata-update endpoint. Document processing (text extraction, chunking, embeddings, vector storage) is explicitly a later phase (Phase 15, RAG) — this phase only stores and serves the raw file securely. See [docs/security.md](docs/security.md) and [docs/database.md](docs/database.md) for the full storage-isolation, upload-validation, and hard-delete reasoning.
+
 ## Running the Frontend
 
 Not yet available. Will be documented starting in Phase 20 once the Vite project is scaffolded (`cd frontend && npm install && npm run dev`).
 
 ## Running with Docker
 
-`docker-compose.yml` provides local infrastructure (PostgreSQL/PGVector, Redis, Kafka) plus the backend service (built from `backend/Dockerfile`). The frontend service remains a placeholder until Phase 20:
+`docker-compose.yml` provides local infrastructure (PostgreSQL/PGVector, Redis, Kafka) plus the backend service (built from `backend/Dockerfile`). Uploaded documents (Phase 13) are persisted in a named `document_storage` volume mounted at `/app/uploads` inside the backend container, so they survive a container restart; no MinIO/S3 service is included. The frontend service remains a placeholder until Phase 20:
 
 ```bash
 cp .env.example .env   # at minimum set DB_PASSWORD and JWT_SECRET
