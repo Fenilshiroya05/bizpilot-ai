@@ -1,15 +1,16 @@
 # AI Architecture
 
-> Status: Phase 14 — a real, minimal Spring AI foundation now exists (`AiChatService`/`AiEmbeddingService`, OpenAI-only, disabled by default). Everything else on this page (RAG, tool calling, action confirmation, structured output, the AI assistant) remains target architecture, not yet implemented — see §0 below for exactly what's real today.
+> Status: Phase 15 — RAG ingestion (extraction/chunking/embedding/PGVector storage) and tenant-safe retrieval are now real. Tool calling, action confirmation, structured output/lead scoring, the AI assistant itself, and conversation persistence remain target architecture, not yet implemented — see §0 below for exactly what's real today.
 
-## 0. Implementation Status (Phase 14)
+## 0. Implementation Status (Phase 15)
 
 What actually exists today, as opposed to the target design described in §1–§9 below:
 
-- **Real**: `ai/config/AiProperties` + `AiConfiguration`, `ai/service/AiChatService` + `DefaultAiChatService` (wraps Spring AI's `ChatClient`), `ai/service/AiEmbeddingService` + `DefaultAiEmbeddingService` (wraps `EmbeddingModel`), `ai/exception/AiProviderException`. Provider: OpenAI only (`spring-ai-starter-model-openai`, Spring AI 1.1.8). Disabled by default (`bizpilot.ai.enabled=false`, and Spring AI's own `spring.ai.model.chat`/`embedding` also default to `none`) — no OpenAI API key is required to build, test, or start the application.
-- **Real**: a `backend/src/main/resources/prompts/` placeholder directory exists (empty, `.gitkeep` only) as the future home for versioned prompt templates (§7), consistent with §7's "dedicated, versioned location within the `ai` module."
-- **Not yet real**: RAG (§3), tool calling (§4), action confirmation (§5), structured output / lead scoring (§6), the AI assistant itself, conversation persistence, PGVector, document embeddings, and any AI REST endpoint or UI. These remain exactly as designed below, unchanged by Phase 14.
-- **Full implementation account**: see [architecture.md §1m](architecture.md) and [security.md §3l](security.md#3l-implementation-notes-phase-14--spring-ai-foundation-and-the-eager-api-key-startup-bug) (the latter documents a real startup bug caught and fixed before completion — Spring AI's OpenAI auto-configuration eagerly validating an API key at bean-creation time).
+- **Real (Phase 14)**: `ai/config/AiProperties` + `AiConfiguration`, `ai/service/AiChatService` + `DefaultAiChatService` (wraps Spring AI's `ChatClient`), `ai/service/AiEmbeddingService` + `DefaultAiEmbeddingService` (wraps `EmbeddingModel`), `ai/exception/AiProviderException`. Provider: OpenAI only (`spring-ai-starter-model-openai`, Spring AI 1.1.8). Disabled by default (`bizpilot.ai.enabled=false`, and Spring AI's own `spring.ai.model.chat`/`embedding` also default to `none`) — no OpenAI API key is required to build, test, or start the application.
+- **Real (Phase 14)**: a `backend/src/main/resources/prompts/` placeholder directory exists (empty, `.gitkeep` only) as the future home for versioned prompt templates (§7), consistent with §7's "dedicated, versioned location within the `ai` module."
+- **Real (Phase 15) — the RAG pipeline, §3, is now implemented, matching the design below almost exactly**: text extraction (PDF/TXT/DOCX) → `TokenTextSplitter` chunking (no overlap — a disclosed, accepted limitation of the pinned Spring AI version) → `AiEmbeddingService.embedBatch` → Spring AI `PgVectorStore` (`document_chunks` for relational integrity, `vector_store` for the actual vectors), triggered asynchronously after upload, with a recovery sweep for crash resilience. Retrieval (`ai/retrieval/DocumentRetrievalService`) is a tenant-scoped, fail-closed internal service — no REST endpoint yet, since nothing (no assistant, no tool calling) consumes it this phase.
+- **Not yet real**: tool calling (§4), action confirmation (§5), structured output / lead scoring (§6), the AI assistant itself, conversation persistence, an AI REST endpoint, and any UI. These remain exactly as designed below.
+- **Full implementation account**: see [architecture.md §1n](architecture.md) and [security.md §3m](security.md#3m-implementation-notes-phase-15--rag-tenant-isolation-and-a-second-instance-of-the-phase-14-startup-bug-class) (tenant isolation in full, the vector-store-write-bypasses-`VectorStore.add()` design decision, and a second instance of Phase 14's startup-bug class, this time caught via source verification before ever running).
 
 ## 1. Principles
 

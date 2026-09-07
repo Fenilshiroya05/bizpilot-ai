@@ -75,6 +75,34 @@ spring:
       embedding:
         options:
           model: ${AI_EMBEDDING_MODEL:text-embedding-3-small}
+    vectorstore:
+      # Phase 15: same "default to disabled, not the real backend" discipline
+      # as spring.ai.model.* above, for the identical reason. Verified
+      # directly against PgVectorStoreAutoConfiguration's own source: its
+      # @ConditionalOnProperty(name = "spring.ai.vectorstore.type",
+      # havingValue = "pgvector", matchIfMissing = true) means an UNSET value
+      # would activate it by default — and its "vectorStore" @Bean method
+      # takes EmbeddingModel as a plain, required (non-Optional) constructor
+      # argument, which does not exist while spring.ai.model.embedding=none
+      # (AI disabled). Left at its implicit default, adding this dependency
+      # would have broken application startup with AI disabled — the exact
+      # same class of bug as the audio-speech one documented above and in
+      # security.md §3l/§3m. AI_VECTORSTORE_TYPE=pgvector must be set
+      # together with AI_ENABLED=true / AI_EMBEDDING_PROVIDER=openai / a
+      # real OPENAI_API_KEY for the RAG pipeline to actually activate.
+      type: ${AI_VECTORSTORE_TYPE:none}
+      pgvector:
+        # Flyway (V12__create_document_chunks_and_vector_store.sql) owns
+        # this table, not Spring AI's own schema initializer — matches this
+        # project's "Flyway is the single source of truth for schema
+        # changes" rule, applied identically to every other table.
+        initialize-schema: false
+        schema-validation: false
+        remove-existing-vector-store-table: false
+        id-type: UUID
+        dimensions: 1536
+        distance-type: COSINE_DISTANCE
+        index-type: HNSW
 
 server:
   port: ${SERVER_PORT:8080}
@@ -103,6 +131,22 @@ bizpilot:
       # container path backed by a named volume) and for tests (an OS temp
       # directory) — see docker-compose.yml and application-test.yml.
       path: ${DOCUMENT_STORAGE_PATH:uploads}
+    processing:
+      # Phase 15 — bounded async executor + recovery-sweep tuning (project
+      # instructions §14/§40). Harmless defaults regardless of whether AI is
+      # enabled: the executor/scheduler beans always exist (see
+      # DocumentProcessingConfig), but nothing submits work to them unless
+      # bizpilot.ai.enabled=true.
+      executor-core-pool-size: ${DOCUMENT_PROCESSING_EXECUTOR_CORE_POOL_SIZE:2}
+      executor-max-pool-size: ${DOCUMENT_PROCESSING_EXECUTOR_MAX_POOL_SIZE:4}
+      executor-queue-capacity: ${DOCUMENT_PROCESSING_EXECUTOR_QUEUE_CAPACITY:50}
+      # How often the recovery sweep runs, and how long a document must have
+      # sat in UPLOADED/PROCESSING before the sweep treats it as stale (the
+      # mitigation for the non-durable AFTER_COMMIT + in-JVM async trigger —
+      # see docs/security.md §3m). ISO-8601 duration format.
+      recovery-interval: ${DOCUMENT_PROCESSING_RECOVERY_INTERVAL:PT2M}
+      stale-uploaded-threshold: ${DOCUMENT_PROCESSING_STALE_UPLOADED_THRESHOLD:PT10M}
+      stale-processing-threshold: ${DOCUMENT_PROCESSING_STALE_PROCESSING_THRESHOLD:PT15M}
 
 management:
   endpoints:

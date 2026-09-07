@@ -1,8 +1,10 @@
 package com.bizpilot.documents.service;
 
+import com.bizpilot.ai.vectorstore.DocumentVectorStoreService;
 import com.bizpilot.documents.entity.Document;
 import com.bizpilot.documents.exception.DocumentNotFoundException;
 import com.bizpilot.documents.exception.InvalidDocumentException;
+import com.bizpilot.documents.processing.DocumentUploadedEvent;
 import com.bizpilot.documents.repository.DocumentRepository;
 import com.bizpilot.organization.TenantContext;
 import com.bizpilot.organization.entity.Organization;
@@ -11,6 +13,8 @@ import com.bizpilot.security.CurrentUserProvider;
 import com.bizpilot.security.UserPrincipal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -67,15 +71,24 @@ public class DocumentService {
     private final TenantContext tenantContext;
     private final OrganizationService organizationService;
     private final CurrentUserProvider currentUserProvider;
+    private final ApplicationEventPublisher eventPublisher;
+    // Optional: DefaultDocumentVectorStoreService only exists when
+    // bizpilot.ai.enabled=true (Phase 14/15's disabled-by-default
+    // convention) — DocumentService itself must work identically whether
+    // or not Phase 15's AI-backed pipeline is active.
+    private final ObjectProvider<DocumentVectorStoreService> documentVectorStoreService;
 
     public DocumentService(DocumentRepository documentRepository, DocumentStorageService storageService,
                             TenantContext tenantContext, OrganizationService organizationService,
-                            CurrentUserProvider currentUserProvider) {
+                            CurrentUserProvider currentUserProvider, ApplicationEventPublisher eventPublisher,
+                            ObjectProvider<DocumentVectorStoreService> documentVectorStoreService) {
         this.documentRepository = documentRepository;
         this.storageService = storageService;
         this.tenantContext = tenantContext;
         this.organizationService = organizationService;
         this.currentUserProvider = currentUserProvider;
+        this.eventPublisher = eventPublisher;
+        this.documentVectorStoreService = documentVectorStoreService;
     }
 
     @Transactional
@@ -97,7 +110,15 @@ public class DocumentService {
         try {
             Document document = new Document(organization, sanitizedFilename, storageKey, contentType,
                     content.length, uploadedByUserId);
-            return documentRepository.save(document);
+            Document saved = documentRepository.save(document);
+            // Published while this transaction is still open — Spring
+            // defers actual delivery to DocumentProcessingListener (an
+            // @TransactionalEventListener(AFTER_COMMIT)) until this
+            // transaction commits, so a rolled-back upload never triggers
+            // processing (project instructions §12). Harmless no-op if no
+            // listener bean exists (AI disabled) — see its Javadoc.
+            eventPublisher.publishEvent(new DocumentUploadedEvent(saved.getId()));
+            return saved;
         } catch (RuntimeException e) {
             cleanUpOrphanedStorageObject(storageKey);
             throw e;
@@ -125,8 +146,20 @@ public class DocumentService {
     @Transactional
     public void delete(UUID id) {
         Document document = findOrThrow(id);
+        // Tenant resolved from TenantContext (never the document row itself)
+        // before touching the vector store — project instructions §36 step
+        // 1. findOrThrow already guarantees this document belongs to the
+        // current organization, so the two values necessarily agree; this
+        // still explicitly re-derives it from TenantContext rather than
+        // document.getOrganization(), matching the "resolve current tenant"
+        // step literally and keeping this call site consistent with every
+        // other tenant-scoped write in this service.
+        UUID organizationId = tenantContext.currentOrganizationId();
+        documentVectorStoreService.ifAvailable(service -> service.deleteForDocument(organizationId, id));
         storageService.delete(document.getStorageKey());
         documentRepository.delete(document);
+        // document_chunks rows (if any) are removed via their document_id
+        // ON DELETE CASCADE foreign key (V12) — no explicit call needed here.
     }
 
     private Document findOrThrow(UUID id) {

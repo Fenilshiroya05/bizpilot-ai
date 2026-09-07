@@ -387,15 +387,26 @@ Only PDF, TXT, and DOCX are accepted — the filename extension, declared `Conte
 Phase 14 adds a minimal Spring AI foundation with **no REST endpoint and no persistence** — it exists purely so future phases (Phase 15 RAG, Phase 16 tool calling, Phase 17 the AI assistant) have a working `AiChatService`/`AiEmbeddingService` to build on. There is nothing to `curl` yet.
 
 - **Provider: OpenAI only**, via `spring-ai-starter-model-openai` (Spring AI 1.1.8, BOM-managed; Spring Boot stays at 3.5.16, unchanged). This is the only starter that provides both chat and embeddings from one artifact/API key.
-- **Disabled by default.** Set `AI_ENABLED=true` in your local `.env` to activate BizPilot's own `DefaultAiChatService`/`DefaultAiEmbeddingService` beans. That alone is **not** sufficient — Spring AI's own model auto-configuration is independently gated by `AI_CHAT_PROVIDER`/`AI_EMBEDDING_PROVIDER`, which must also be set to `openai` (not left at their `none` default), together with a real `OPENAI_API_KEY`. All three must be set together to actually reach OpenAI:
+- **Disabled by default.** Set `AI_ENABLED=true` in your local `.env` to activate BizPilot's own `DefaultAiChatService`/`DefaultAiEmbeddingService` beans. That alone is **not** sufficient — Spring AI's own model auto-configuration is independently gated by `AI_CHAT_PROVIDER`/`AI_EMBEDDING_PROVIDER`, which must also be set to `openai` (not left at their `none` default), together with a real `OPENAI_API_KEY`.
+- With none of the above set (the out-of-the-box default), the application builds, tests, and starts exactly as before — no network call is made and no API key is required. This was verified live: starting the `backend` Docker container with zero AI environment variables and no API key configured starts cleanly with no errors.
+- See [docs/ai-architecture.md](docs/ai-architecture.md) §0 for exactly what is and isn't implemented, and [docs/security.md](docs/security.md) §3l for a real startup bug (an eager API-key check in Spring AI's own OpenAI auto-configuration) that was caught and fixed during this phase.
+
+### RAG Foundation (Phase 15)
+
+Phase 15 adds document ingestion (text extraction → chunking → embeddings → PGVector) and tenant-safe semantic retrieval — still **no REST endpoint** (there's nothing new to `curl` — retrieval is an internal service Phase 16+'s assistant will call) and no chatbot/tool calling/conversation persistence.
+
+- **Fully automatic once AI is enabled**: uploading a document (`POST /api/v1/documents`, unchanged from Phase 13) now also triggers background processing — text is extracted, split into ~800-token chunks, embedded in batches, and stored in PostgreSQL/pgvector. Poll `GET /api/v1/documents/{id}` and watch `status` move from `UPLOADED` → `PROCESSING` → `COMPLETED` (or `FAILED`).
+- **A third variable is required to actually activate the pipeline**, on top of Phase 14's three — `AI_VECTORSTORE_TYPE=pgvector` (it defaults to `none`, for the identical "don't require a live backend at startup" reason `AI_CHAT_PROVIDER`/`AI_EMBEDDING_PROVIDER` do). All four together, plus a real key, are what's needed:
   ```
   AI_ENABLED=true
   AI_CHAT_PROVIDER=openai
   AI_EMBEDDING_PROVIDER=openai
+  AI_VECTORSTORE_TYPE=pgvector
   OPENAI_API_KEY=sk-...your real key...
   ```
-- With none of the above set (the out-of-the-box default), the application builds, tests, and starts exactly as before — no network call is made and no API key is required. This was verified live: starting the `backend` Docker container with zero AI environment variables and no API key configured starts cleanly with no errors.
-- No AI REST endpoint, no chat UI, no conversation persistence, no RAG, and no tool calling exist yet — see [docs/ai-architecture.md](docs/ai-architecture.md) §0 for exactly what is and isn't implemented, and [docs/security.md](docs/security.md) §3l for a real startup bug (an eager API-key check in Spring AI's own OpenAI auto-configuration) that was caught and fixed during this phase.
+- With none of the above set (the out-of-the-box default), the application builds, tests, and starts exactly as before — an uploaded document simply stays `UPLOADED` forever (nothing processes it), no network call is made, and no API key is required. Verified live in Docker.
+- **No new infrastructure** — PGVector runs inside the same `pgvector/pgvector:pg16` Postgres image already used since Phase 3; no separate vector database, no Ollama/proxy service.
+- Tenant isolation is mandatory and enforced at query time, not as an afterthought — see [docs/security.md](docs/security.md) §3m for the full account, including two real bugs (a startup-configuration issue and a transaction-boundary issue) caught and fixed before this phase was reported complete.
 
 ## Running the Frontend
 

@@ -1,10 +1,12 @@
 package com.bizpilot.documents.service;
 
+import com.bizpilot.ai.vectorstore.DocumentVectorStoreService;
 import com.bizpilot.documents.entity.Document;
 import com.bizpilot.documents.entity.DocumentStatus;
 import com.bizpilot.documents.exception.DocumentNotFoundException;
 import com.bizpilot.documents.exception.DocumentStorageException;
 import com.bizpilot.documents.exception.InvalidDocumentException;
+import com.bizpilot.documents.processing.DocumentUploadedEvent;
 import com.bizpilot.documents.repository.DocumentRepository;
 import com.bizpilot.organization.TenantContext;
 import com.bizpilot.organization.entity.Organization;
@@ -17,11 +19,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.mock.web.MockMultipartFile;
 
 import java.nio.charset.StandardCharsets;
@@ -57,6 +61,12 @@ class DocumentServiceTest {
     @Mock
     private CurrentUserProvider currentUserProvider;
 
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
+    @SuppressWarnings("unchecked")
+    private final ObjectProvider<DocumentVectorStoreService> documentVectorStoreServiceProvider = mock(ObjectProvider.class);
+
     private final UUID organizationId = UUID.randomUUID();
     private final UUID currentUserId = UUID.randomUUID();
     private final Organization organization = new Organization("Acme Corp");
@@ -73,7 +83,7 @@ class DocumentServiceTest {
 
     private DocumentService service() {
         return new DocumentService(documentRepository, storageService, tenantContext, organizationService,
-                currentUserProvider);
+                currentUserProvider, eventPublisher, documentVectorStoreServiceProvider);
     }
 
     private MockMultipartFile pdfFile(String filename) {
@@ -263,6 +273,56 @@ class DocumentServiceTest {
         when(documentRepository.findByIdAndOrganizationId(any(), any())).thenReturn(Optional.of(existing));
         // storageService.delete is a mock — calling it does nothing by
         // default, exactly matching the real idempotent no-op behavior.
+
+        service().delete(UUID.randomUUID());
+
+        verify(documentRepository).delete(existing);
+    }
+
+    @Test
+    void uploadPublishesADocumentUploadedEventAfterPersisting() {
+        Document uploaded = service().upload(pdfFile("contract.pdf"));
+
+        ArgumentCaptor<DocumentUploadedEvent> eventCaptor = ArgumentCaptor.forClass(DocumentUploadedEvent.class);
+        verify(eventPublisher).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().documentId()).isEqualTo(uploaded.getId());
+    }
+
+    @Test
+    void uploadDoesNotPublishAnEventWhenTheDatabaseInsertFails() {
+        when(documentRepository.save(any(Document.class))).thenThrow(new RuntimeException("db unavailable"));
+
+        assertThatThrownBy(() -> service().upload(pdfFile("contract.pdf")));
+
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void deleteInvokesTenantScopedVectorCleanupWhenTheAiPipelineIsEnabled() {
+        Document existing = new Document(organization, "contract.pdf", "organizations/x/documents/y",
+                "application/pdf", 1024, currentUserId);
+        when(documentRepository.findByIdAndOrganizationId(any(), any())).thenReturn(Optional.of(existing));
+        DocumentVectorStoreService vectorStoreService = mock(DocumentVectorStoreService.class);
+        doAnswer(invocation -> {
+            invocation.<java.util.function.Consumer<DocumentVectorStoreService>>getArgument(0).accept(vectorStoreService);
+            return null;
+        }).when(documentVectorStoreServiceProvider).ifAvailable(any());
+
+        UUID documentId = UUID.randomUUID();
+        service().delete(documentId);
+
+        verify(vectorStoreService).deleteForDocument(organizationId, documentId);
+    }
+
+    @Test
+    void deleteToleratesTheAiPipelineBeingDisabled() {
+        // documentVectorStoreServiceProvider is an unstubbed mock here —
+        // ifAvailable(...) is a no-op by default, exactly matching real
+        // Spring behavior when bizpilot.ai.enabled=false (no
+        // DocumentVectorStoreService bean exists at all).
+        Document existing = new Document(organization, "contract.pdf", "organizations/x/documents/y",
+                "application/pdf", 1024, currentUserId);
+        when(documentRepository.findByIdAndOrganizationId(any(), any())).thenReturn(Optional.of(existing));
 
         service().delete(UUID.randomUUID());
 

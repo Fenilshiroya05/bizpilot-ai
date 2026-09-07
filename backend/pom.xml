@@ -28,6 +28,10 @@
              project does not use. Locked decision; do not bump to 2.x without
              also deciding to upgrade Spring Boot. -->
         <spring-ai.version>1.1.8</spring-ai.version>
+        <!-- Phase 15: DOCX text extraction only (CLAUDE.md §16/§17) — not managed
+             by spring-boot-starter-parent's own dependency management, so pinned
+             explicitly here, the same way pdfbox.version already is. -->
+        <poi.version>5.5.1</poi.version>
     </properties>
 
     <dependencyManagement>
@@ -120,6 +124,35 @@
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
+
+        <!-- Phase 15: RAG foundation (CLAUDE.md §17, §6) — Spring AI's PGVector
+             VectorStore, same 1.1.8 BOM already pinned above. Flyway (not Spring
+             AI's own schema initializer) owns the vector_store table — see
+             V12__create_document_chunks_and_vector_store.sql and
+             spring.ai.vectorstore.pgvector.initialize-schema=false in
+             application.yml. -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-vector-store-pgvector</artifactId>
+        </dependency>
+
+        <!-- DOCX text extraction only (CLAUDE.md §16/§17, Phase 15) — the
+             minimal Apache POI modules needed for .docx (OOXML WordprocessingML)
+             text extraction; no spreadsheet (poi-ooxml handles both, but only
+             XWPF/.docx APIs are used), no OCR, no Apache Tika (a much larger,
+             format-detecting dependency this narrow, three-fixed-format need
+             doesn't justify — mirrors the PDFBox-over-Tika reasoning from
+             Phase 10). -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi</artifactId>
+            <version>${poi.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>${poi.version}</version>
         </dependency>
 
         <!-- Testing -->

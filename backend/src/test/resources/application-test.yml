@@ -19,6 +19,12 @@ spring:
       # doesn't control.
       chat: none
       embedding: none
+    vectorstore:
+      # Same defensive override as chat/embedding above, extended to Phase
+      # 15's PGVector starter — guarantees the general test suite never
+      # requires a live vector-store bean regardless of any AI_VECTORSTORE_TYPE
+      # pollution in the environment the test runs in.
+      type: none
 
 bizpilot:
   jwt:

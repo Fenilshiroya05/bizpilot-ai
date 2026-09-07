@@ -1,6 +1,6 @@
 # Database
 
-> Status: Phase 14 — no schema change. Spring AI foundation (CLAUDE.md §5) is a wiring-only phase: `ai_usage`, `ai_tool_calls`, `conversations`, `conversation_messages` remain planned-but-not-created (see the Planned Entities table below) until the phases that actually need them (usage tracking/tool calling — Phase 16+; conversations — Phase 17). Latest migration remains `V11__create_documents.sql` (Phase 13). Remaining business tables are introduced incrementally starting Phase 15 (RAG + PGVector), per `docs/roadmap.md`.
+> Status: Phase 15 — `document_chunks` (relational integrity, real tables/FKs) and `vector_store` (Spring AI `PgVectorStore`-owned) added via `V12__create_document_chunks_and_vector_store.sql`. `ai_usage`, `ai_tool_calls`, `conversations`, `conversation_messages` remain planned-but-not-created (see the Planned Entities table below) until the phases that actually need them (usage tracking/tool calling — Phase 16+; conversations — Phase 17). Latest migration is `V12__create_document_chunks_and_vector_store.sql`; `V1`–`V11` unchanged.
 
 ## 0. Implementation Notes (Phase 3)
 
@@ -113,6 +113,15 @@
 - **First hard delete**: unlike every prior "delete" (a status transition to `CANCELLED`/`ARCHIVED`), deleting a document physically removes both the stored file and the database row — CLAUDE.md §16 gives documents no terminal status value to transition to instead, and the approved Phase 13 decision explicitly rules out a soft-delete flag. Storage deletion happens before the database row deletion (the reverse of the upload ordering) specifically so a database-delete failure after a successful storage delete is self-healing on retry (`DocumentStorageService.delete` is idempotent) — see [security.md](security.md) §3k for the full ordering rationale on both upload and delete.
 - **Indexes**: `ux_documents_storage_key` (unique), `ix_documents_organization_id`, `ix_documents_organization_id_status`, `ix_documents_uploaded_by_user_id`, `ix_documents_content_type`.
 
+## 0k. Implementation Notes (Phase 15)
+
+- `V12__create_document_chunks_and_vector_store.sql` adds exactly two tables — no others. `V1`–`V11` are unmodified; the `vector` extension itself was already enabled by `V1` (Phase 3, in anticipation of this exact phase) and is not re-created here.
+- **`document_chunks`**: `id`, `organization_id` (`NOT NULL REFERENCES organizations`), `document_id` (`NOT NULL REFERENCES documents ON DELETE CASCADE`), `chunk_index`, `content_type`, timestamps. Deliberately holds **neither chunk text nor the embedding vector** — both remain the sole responsibility of `vector_store`. This table exists purely to give every chunk a real, `NOT NULL`, foreign-keyed tie to exactly one organization and one document — a DB-schema-level guarantee `vector_store`'s own JSON metadata column cannot provide. `UNIQUE (document_id, chunk_index)` prevents duplicate chunk positions (idempotent-rebuild protection). Indexes: `ix_document_chunks_organization_id`, `ix_document_chunks_document_id`.
+- **`vector_store`**: Spring AI `PgVectorStore`'s own expected schema (verified directly against its 1.1.8 source, not assumed) — `id uuid` (default `gen_random_uuid()`, not `uuid_generate_v4()` — no `uuid-ossp` dependency), `content text`, `metadata json`, `embedding vector(1536)`, with an `hnsw (embedding vector_cosine_ops)` index (`spring_ai_vector_index`, matching PgVectorStore's own default index name). Owned entirely by Flyway (`spring.ai.vectorstore.pgvector.initialize-schema=false` in application.yml) — no BizPilot JPA entity maps to it; it is written to and read from exclusively through `com.bizpilot.ai.vectorstore.DocumentVectorStoreService` (writes/deletes) and Spring AI's own `VectorStore.similaritySearch` (reads), never directly by any other module.
+- **The join key between the two tables**: every `document_chunks.id` is reused, verbatim, as its corresponding `vector_store.id` — assigned once by Hibernate's `GenerationType.UUID` (a before-execution generator, so the id is already known immediately after `save()`, before the same transaction even flushes) and passed straight through to the `vector_store` insert.
+- **No separate REST API, no new RBAC permission** — `AI_USE` (already existing since Phase 6) is the only permission this phase's future consumers (Phase 16+) will need; Phase 15 itself exposes nothing over HTTP.
+- Full detail (tenant isolation, the write-path-bypasses-`VectorStore.add()` design decision, and the fail-closed retrieval contract) is in [security.md](security.md) §3m.
+
 ## 1. Engine
 
 - **PostgreSQL** is the primary datastore.
@@ -153,7 +162,8 @@
 | `invoice_items` ✅ (Phase 11) | Line items on an invoice, snapshotting product name/price/tax — see §0h. |
 | `tasks` ✅ (Phase 12) | Task management records, optionally linked to a customer/lead — see §0i. |
 | `documents` ✅ (Phase 13) | Uploaded document metadata and processing status — no business-entity associations (see §0j). |
-| `document_chunks` | Chunked, embedded document text for RAG (PGVector column). |
+| `document_chunks` ✅ (Phase 15) | Relational integrity (organization/document FKs) for RAG chunks — no chunk text or embedding (see §0k). |
+| `vector_store` ✅ (Phase 15, not in original CLAUDE.md list) | Spring AI `PgVectorStore`-owned — chunk text, JSON metadata, and the `vector(1536)` embedding column itself (see §0k). |
 | `conversations` | AI assistant conversation sessions. |
 | `conversation_messages` | Individual messages within a conversation. |
 | `notifications` | User-facing notifications. |
@@ -207,7 +217,15 @@ tasks *──0..1 users (optional, via assigned_to_user_id)
 -- attribution reference, same pattern as tasks.assigned_to_user_id.
 documents *──1 organizations
 documents *──0..1 users (optional, via uploaded_by_user_id)
-documents 1──* document_chunks -- Phase 15 (RAG) — not created in Phase 13
+documents 1──* document_chunks -- Phase 15, ON DELETE CASCADE via document_id
+document_chunks *──1 organizations
+
+-- vector_store has no FK to documents/document_chunks/organizations at all
+-- (Spring AI's own schema has no such column) — the join to document_chunks
+-- is by shared id value only (application-enforced, see §0k), and tenant/
+-- document identity for the actual similarity-search filter lives in its
+-- own JSON metadata column, never a typed column.
+vector_store -.- document_chunks : same id, application-enforced only
 
 conversations 1──* conversation_messages
 ```
@@ -216,4 +234,4 @@ conversations 1──* conversation_messages
 
 - Entities are **never** exposed directly through REST APIs — DTOs and mappers are mandatory at every controller boundary.
 - All repository queries touching tenant-scoped tables must filter by `organization_id`; this is treated as a security control, not just a data-modeling detail (see [security.md](security.md)).
-- Vector similarity queries against `document_chunks` must always be constrained to the requesting organization's documents.
+- Vector similarity queries against `vector_store` must always be constrained to the requesting organization — enforced as a mandatory metadata filter applied at query time (never an unfiltered search followed by an application-side filter), and never accepting a caller-supplied organization id or raw filter expression. See [security.md](security.md) §3m.

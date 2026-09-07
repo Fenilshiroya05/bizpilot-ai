@@ -104,6 +104,14 @@ services:
       AI_CHAT_MODEL: ${AI_CHAT_MODEL:-gpt-4o-mini}
       AI_EMBEDDING_MODEL: ${AI_EMBEDDING_MODEL:-text-embedding-3-small}
       AI_CHAT_TEMPERATURE: ${AI_CHAT_TEMPERATURE:-0.7}
+      # Phase 15: RAG + PGVector (CLAUDE.md §17) — same disabled-by-default
+      # discipline as the Phase 14 vars above and for the identical reason
+      # (spring.ai.vectorstore.pgvector's own auto-configuration would
+      # otherwise require a live EmbeddingModel bean at startup). Set to
+      # "pgvector" only alongside AI_ENABLED=true and AI_EMBEDDING_PROVIDER=openai.
+      # No new service/image is added — PGVector runs inside the existing
+      # pgvector/pgvector:pg16 postgres service.
+      AI_VECTORSTORE_TYPE: ${AI_VECTORSTORE_TYPE:-none}
     env_file:
       - path: .env
         required: false

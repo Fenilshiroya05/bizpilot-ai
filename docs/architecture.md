@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 14 — `ai` gains its Spring AI 1.1.8 foundation: `AiChatService`/`AiEmbeddingService` wrapping `ChatClient`/`EmbeddingModel`, disabled by default, OpenAI the sole configured provider. No RAG, no PGVector, no persistence, no REST API — those remain later phases. Remaining business modules (`analytics`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 15 — `documents`/`ai` gain the RAG ingestion + retrieval pipeline: text extraction (PDF/TXT/DOCX) → `TokenTextSplitter` chunking → batched embeddings → Spring AI `PgVectorStore`, triggered by an `AFTER_COMMIT` event + bounded async executor, with a recovery sweep for crash resilience. Mandatory, internally-constructed tenant filtering on every vector query/delete. No REST API, no chatbot, no tool calling, no conversation persistence — those remain later phases. Remaining business modules (`analytics`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -120,6 +120,19 @@
 - **Prompt management placeholder**: `backend/src/main/resources/prompts/.gitkeep` — no template content yet (nothing needs one before Phase 17); mirrors the same empty-placeholder convention already used for `ai`/`tasks`/`documents` Java packages before their own phases.
 - Full detail is in [security.md](security.md) §2i/§3l and [docs/ai-architecture.md](ai-architecture.md).
 
+## 1n. RAG Foundation (Phase 15)
+
+- **`documents` module** gains `extraction/{DocumentTextExtractor, PdfTextExtractor, TxtTextExtractor, DocxTextExtractor, TextExtractionService}`, `processing/{DocumentUploadedEvent, DocumentProcessingListener, DocumentProcessingService, DocumentProcessingResultService, DocumentChunkingService, DocumentRecoveryScheduler, TextChunk}`, `config/{DocumentProcessingProperties, DocumentProcessingConfig}`, `entity/DocumentChunk`, `repository/DocumentChunkRepository`, `exception/DocumentProcessingException`. **`ai` module** gains `vectorstore/{DocumentVectorStoreService, DefaultDocumentVectorStoreService, VectorChunk}` and `retrieval/{DocumentRetrievalService, DefaultDocumentRetrievalService, RetrievedChunk}`, plus a batch method on the existing `AiEmbeddingService`. No `controller/` in either — still no REST API this phase.
+- **Extraction**: PDFBox `PDFTextStripper` (already a dependency, Phase 10) for PDF; a plain UTF-8 read for TXT; Apache POI's `XWPFWordExtractor` (new, minimal dependency — not Apache Tika, for the same "three fixed formats don't justify a format-detecting library" reasoning as Phase 13's `DocumentValidator`) for DOCX. Dispatch is strict, by the document's already-validated `contentType` — never a permissive fallback.
+- **Chunking**: Spring AI's own `TokenTextSplitter` (no custom algorithm), with the locked configuration (800-token chunks, 350 min chars, 5 min length-to-embed, 10000 max chunks, keep-separator) — no chunk overlap, since `TokenTextSplitter` has no configurable overlap as of 1.1.8 (verified against Spring AI's own issue tracker), an accepted trade-off, not an oversight.
+- **Embedding**: `AiEmbeddingService` gained `embedBatch(List<String>)` (internal sub-batches of 100, never one OpenAI call per chunk), still `text-embedding-3-small`/1536 dimensions, still OpenAI-only.
+- **Storage**: Spring AI's `PgVectorStore` for similarity search and delete; a `document_chunks` table (real, FK'd, Flyway-managed) for relational tenant/document integrity. **Vector-store writes deliberately bypass `VectorStore.add()`** — verified against 1.1.8 source that it always re-embeds internally via its own `EmbeddingModel`, which would silently double every embedding call if used alongside `AiEmbeddingService.embedBatch`; a plain, schema-matching `JdbcTemplate` insert is used instead, so every embedding call still goes through the one wrapper CLAUDE.md §5 requires. See [security.md](security.md) §3m for the full reasoning and [database.md](database.md) §0k for the schema.
+- **Processing trigger**: `DocumentService.upload` publishes `DocumentUploadedEvent` (document id only) after its transaction commits; a `@TransactionalEventListener(AFTER_COMMIT)` dispatches to `DocumentProcessingService.process`, itself `@Async` on a dedicated bounded executor (2–4 threads, bounded queue — never the common pool, never unbounded). A `DocumentRecoveryScheduler` periodically re-triggers documents stuck in `UPLOADED`/`PROCESSING` past a configured threshold — the accepted mitigation for this trigger's known limitation (non-durable: a crash between commit and listener execution loses the event).
+- **Concurrency/idempotency**: a single atomic `UPDATE ... WHERE status IN ('UPLOADED','FAILED')` (`DocumentRepository.transitionToProcessing`) is the sole concurrency guard — never an in-memory flag — safe across the async executor and the recovery scheduler racing for the same document. Every processing attempt (first-run or reprocess alike) clears any prior `document_chunks`/`vector_store` rows before rebuilding, so retrying is safe by construction.
+- **Transaction boundaries**: only the atomic status transition and the final persist-results step (`DocumentProcessingResultService`, a separate bean from `DocumentProcessingService` specifically so its `@Transactional` methods are invoked through a real Spring proxy, not a self-invoked no-op) are transactional — extraction, chunking, and the OpenAI embedding call all happen with no open transaction.
+- **Disabled by default, transitively.** All new beans in both modules are gated behind `bizpilot.ai.enabled=true` (unchanged from Phase 14) — additionally, `spring.ai.vectorstore.type` now defaults to `none` too (a second instance of Phase 14's exact startup-bug class, caught this time via source verification before ever running, not after a failure — see [security.md](security.md) §3m). `DocumentService` itself needs no conditional logic beyond an `ObjectProvider<DocumentVectorStoreService>` — publishing an event with no listener, or calling `ifAvailable` on an absent bean, are both safe no-ops.
+- Full detail is in [security.md](security.md) §3m and [database.md](database.md) §0k.
+
 ## 1. Style
 
 BizPilot AI is built as a **modular monolith** on the backend, not a microservices system. Business capabilities are separated into clearly bounded Java packages (modules) inside a single Spring Boot application. This gives most of the maintainability benefits of modular design (clear boundaries, independent evolution, testability) without the operational overhead of distributed systems, which is not justified at this stage.
@@ -170,8 +183,8 @@ Each module owns its own controller/service/repository/entity/dto/mapper/excepti
 | `crm` | Customers, customer activities/notes ✅ (Phase 7) |
 | `sales` | Leads ✅ (Phase 8), quotations ✅ (Phase 10), invoices, sales pipeline |
 | `products` | Product catalog, categories ✅ (Phase 9) |
-| `documents` | Document upload, metadata, local storage abstraction ✅ (Phase 13); text extraction/chunking deferred to Phase 15 |
-| `ai` | Spring AI integration: chat ✅/embeddings ✅ foundation (Phase 14); RAG, tool calling, conversation memory deferred to Phase 15+ |
+| `documents` | Document upload, metadata, local storage abstraction ✅ (Phase 13); extraction/chunking/async processing pipeline ✅ (Phase 15) |
+| `ai` | Spring AI integration: chat ✅/embeddings ✅ foundation (Phase 14); PGVector storage + tenant-safe retrieval ✅ (Phase 15); tool calling, conversation memory deferred to Phase 16+ |
 | `analytics` | Dashboards, aggregated reporting |
 | `tasks` | Task management ✅ (Phase 12) |
 | `notifications` | Notification delivery |

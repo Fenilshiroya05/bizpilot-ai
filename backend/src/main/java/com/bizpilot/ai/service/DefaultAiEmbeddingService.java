@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Default {@link AiEmbeddingService} implementation, built directly on
@@ -22,6 +24,13 @@ import java.time.Instant;
 public class DefaultAiEmbeddingService implements AiEmbeddingService {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultAiEmbeddingService.class);
+
+    /**
+     * Internal sub-batch size for {@link #embedBatch(List)} (project
+     * instructions §29: "a reasonable initial batch size is 100 texts...
+     * keep this internal") — deliberately not a configuration property.
+     */
+    private static final int MAX_BATCH_SIZE = 100;
 
     private final EmbeddingModel embeddingModel;
     private final AiProperties aiProperties;
@@ -47,6 +56,35 @@ public class DefaultAiEmbeddingService implements AiEmbeddingService {
             log.error("AI embedding request failed [provider={}, durationMs={}, errorType={}]",
                     aiProperties.provider(), durationMs, e.getClass().getSimpleName(), e);
             throw new AiProviderException("AI embedding request failed", e);
+        }
+    }
+
+    @Override
+    public List<float[]> embedBatch(List<String> texts) {
+        if (texts.isEmpty()) {
+            return List.of();
+        }
+        Instant start = Instant.now();
+        try {
+            List<float[]> results = new ArrayList<>(texts.size());
+            int batchCount = 0;
+            for (int fromIndex = 0; fromIndex < texts.size(); fromIndex += MAX_BATCH_SIZE) {
+                int toIndex = Math.min(fromIndex + MAX_BATCH_SIZE, texts.size());
+                // EmbeddingModel.embed(List<String>) is Spring AI's own
+                // batched call (one provider request per sub-batch, not one
+                // per text) — see EmbeddingModel's default method.
+                results.addAll(embeddingModel.embed(texts.subList(fromIndex, toIndex)));
+                batchCount++;
+            }
+            long durationMs = Duration.between(start, Instant.now()).toMillis();
+            log.info("AI batch embedding request succeeded [provider={}, textCount={}, batchCount={}, durationMs={}]",
+                    aiProperties.provider(), texts.size(), batchCount, durationMs);
+            return results;
+        } catch (RuntimeException e) {
+            long durationMs = Duration.between(start, Instant.now()).toMillis();
+            log.error("AI batch embedding request failed [provider={}, textCount={}, durationMs={}, errorType={}]",
+                    aiProperties.provider(), texts.size(), durationMs, e.getClass().getSimpleName(), e);
+            throw new AiProviderException("AI batch embedding request failed", e);
         }
     }
 }
