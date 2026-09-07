@@ -13,9 +13,13 @@ import com.bizpilot.products.exception.InvalidProductDataException;
 import com.bizpilot.products.exception.ProductCategoryNotFoundException;
 import com.bizpilot.products.exception.ProductNotFoundException;
 import com.bizpilot.sales.exception.InvalidAssigneeException;
+import com.bizpilot.sales.exception.InvalidCustomerReferenceException;
 import com.bizpilot.sales.exception.InvalidLeadDataException;
+import com.bizpilot.sales.exception.InvalidProductReferenceException;
+import com.bizpilot.sales.exception.InvalidQuotationDataException;
 import com.bizpilot.sales.exception.LeadArchivedException;
 import com.bizpilot.sales.exception.LeadNotFoundException;
+import com.bizpilot.sales.exception.QuotationNotFoundException;
 import com.bizpilot.security.exception.AccountNotActiveException;
 import com.bizpilot.security.exception.InvalidCredentialsException;
 import com.bizpilot.security.exception.InvalidRefreshTokenException;
@@ -284,6 +288,53 @@ public class GlobalExceptionHandler {
         ApiError body = ApiError.of(
                 HttpStatus.BAD_REQUEST.value(),
                 "INVALID_PRODUCT_DATA",
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(QuotationNotFoundException.class)
+    public ResponseEntity<ApiError> handleQuotationNotFound(QuotationNotFoundException ex, HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.NOT_FOUND.value(),
+                "QUOTATION_NOT_FOUND",
+                "Quotation not found",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+    }
+
+    @ExceptionHandler(InvalidCustomerReferenceException.class)
+    public ResponseEntity<ApiError> handleInvalidCustomerReference(InvalidCustomerReferenceException ex,
+                                                                     HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "INVALID_CUSTOMER_REFERENCE",
+                "The specified customer does not exist in this organization",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(InvalidProductReferenceException.class)
+    public ResponseEntity<ApiError> handleInvalidProductReference(InvalidProductReferenceException ex,
+                                                                    HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "INVALID_PRODUCT_REFERENCE",
+                "The specified product does not exist in this organization",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(InvalidQuotationDataException.class)
+    public ResponseEntity<ApiError> handleInvalidQuotationData(InvalidQuotationDataException ex,
+                                                                 HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "INVALID_QUOTATION_DATA",
                 ex.getMessage(),
                 request.getRequestURI()
         );

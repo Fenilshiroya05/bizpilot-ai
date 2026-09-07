@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 9 — the `products` module is populated with Products and Product Categories, the first phase to extend the Phase 6 RBAC permission catalog itself (`PRODUCT_*`, via V7) rather than only consume permissions already seeded by V4. Remaining business modules (`documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 10 — the `sales` module gains Quotations, the first resource referencing entities from two other business modules at once (`crm.Customer`, `products.Product`) and the first with a backend-owned, persisted financial calculation chain. Remaining business modules (`documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -69,6 +69,18 @@
 - **Category is one-per-product, not many-to-many** — a plain nullable `category_id` FK, validated tenant-safe (a category from another organization can never be assigned to a product) exactly the way Lead's assignee reference is validated.
 - Full detail (field decisions, SKU/price/tax rules, category relationship, delete semantics, validation, tenant-isolation/RBAC test coverage) is in [security.md](security.md) and [database.md](database.md).
 
+## 1i. Sales Foundation — Quotations (Phase 10)
+
+- **`sales` module** gains `entity/Quotation`, `entity/QuotationItem`, `entity/QuotationStatus`, `repository/QuotationRepository`, `dto/*`, `mapper/QuotationMapper`, `mapper/QuotationItemMapper`, `service/QuotationService`, `service/QuotationCalculator` (a pure, dependency-free calculation class), `service/QuotationSearchCriteria`, `service/QuotationPdfService`, `controller/QuotationController` (`/api/v1/quotations`), `exception/*`. Same layering and conventions as `crm`/`products`.
+- **First entity referencing two other business modules at once.** `Quotation.customer` (`crm.entity.Customer`) and `QuotationItem.product` (`products.entity.Product`) are direct cross-module JPA `@ManyToOne` relationships — the established pattern (`identity.entity.User` → `organization.entity.Organization`) extended to a resource that genuinely needs two different foreign business entities, not a new architectural exception.
+- **No new RBAC migration** — unlike Products (Phase 9), CLAUDE.md's original permission catalog already named `QUOTATION_READ`/`CREATE`/`UPDATE`/`DELETE`, and Phase 6's V4 migration already seeded them with the correct role mapping. Confirmed directly against the database before writing any code. See [security.md](security.md) §2e.
+- **First backend-owned, persisted financial calculation chain**: `QuotationCalculator` (subtotal → discount → tax → grand total) is a plain, Spring-free class specifically so it stays trivially unit-testable — see [security.md](security.md) §3f and [database.md](database.md) §0g for the full precision/rounding/allocation reasoning.
+- **Product snapshot rule, mirroring the general "point-in-time business document" principle**: `QuotationItem` copies the product's name/price/tax at creation/replacement time and never re-reads the live product afterward.
+- **No archive field — CLAUDE.md's own status enum already has `CANCELLED`**, so "delete" is modeled as a status transition (`DELETE /api/v1/quotations/{id}`), not a new lifecycle column — unlike Lead, which needed a separate `archivedAt` because its status enum has no cancellation-equivalent value.
+- **PDF generation is a dedicated, Spring-managed service (`QuotationPdfService`) using Apache PDFBox**, generated entirely on demand from the already-backend-calculated `Quotation` — never persisted, since no storage abstraction exists until the Documents module (Phase 13), and building one now would be speculative infrastructure ahead of its assigned phase.
+- **List responses omit line items (`QuotationSummaryResponse`)**; only the single-resource endpoints (`get`/`create`/`update`) include the full item list (`QuotationResponse`), via a dedicated `JOIN FETCH` repository query — a deliberate response-shape split to avoid the well-known JPA "collection fetch join breaks pagination" trap. See [database.md](database.md) §0g.
+- Full detail (field decisions, discount/tax model, snapshot rule, delete semantics, validation, tenant-isolation/RBAC test coverage) is in [security.md](security.md) and [database.md](database.md).
+
 ## 1. Style
 
 BizPilot AI is built as a **modular monolith** on the backend, not a microservices system. Business capabilities are separated into clearly bounded Java packages (modules) inside a single Spring Boot application. This gives most of the maintainability benefits of modular design (clear boundaries, independent evolution, testability) without the operational overhead of distributed systems, which is not justified at this stage.
@@ -117,7 +129,7 @@ Each module owns its own controller/service/repository/entity/dto/mapper/excepti
 | `identity` | Users, roles, permissions, user-role assignment ✅ (Phase 6) |
 | `organization` | Organizations and multi-tenancy context resolution |
 | `crm` | Customers, customer activities/notes ✅ (Phase 7) |
-| `sales` | Leads ✅ (Phase 8), quotations, invoices, sales pipeline |
+| `sales` | Leads ✅ (Phase 8), quotations ✅ (Phase 10), invoices, sales pipeline |
 | `products` | Product catalog, categories ✅ (Phase 9) |
 | `documents` | Document upload, storage abstraction, text extraction, chunking |
 | `ai` | Spring AI integration: chat, embeddings, RAG, tool calling, conversation memory |

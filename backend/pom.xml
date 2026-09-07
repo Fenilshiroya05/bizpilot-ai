@@ -22,6 +22,7 @@
     <properties>
         <java.version>21</java.version>
         <jjwt.version>0.13.0</jjwt.version>
+        <pdfbox.version>3.0.3</pdfbox.version>
     </properties>
 
     <dependencies>
@@ -83,6 +84,14 @@
             <artifactId>jjwt-jackson</artifactId>
             <version>${jjwt.version}</version>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Quotation PDF generation (CLAUDE.md §14, Phase 10) — Apache 2.0 licensed,
+             no problematic transitive dependencies (pdfbox-io, fontbox, commons-logging only). -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>${pdfbox.version}</version>
         </dependency>
 
         <!-- Testing -->

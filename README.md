@@ -273,6 +273,32 @@ curl -s -X DELETE http://localhost:8080/api/v1/products/$PRODUCT_ID -H "Authoriz
 
 See [docs/security.md](docs/security.md) and [docs/database.md](docs/database.md) for the SKU/price/tax decisions, the category relationship, and why Products have no archive mechanism.
 
+### Quotations (Phase 10)
+
+```bash
+# Create a quotation (requires QUOTATION_CREATE — unitPrice/taxPercentage are
+# always snapshotted from the product, never accepted from the client)
+curl -s -X POST http://localhost:8080/api/v1/quotations \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"customerId":"'"$CUSTOMER_ID"'","discountPercentage":10,"items":[{"productId":"'"$PRODUCT_ID"'","quantity":2}]}'
+
+# Update status (SENT/ACCEPTED/REJECTED/EXPIRED — CANCELLED is rejected here, see below)
+curl -s -X PATCH http://localhost:8080/api/v1/quotations/$QUOTATION_ID \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"status":"SENT"}'
+
+# List/search/filter/paginate
+curl -s "http://localhost:8080/api/v1/quotations?status=DRAFT&customerId=$CUSTOMER_ID&page=0&size=20" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Download the quotation as a PDF (generated on demand, never persisted)
+curl -s http://localhost:8080/api/v1/quotations/$QUOTATION_ID/pdf -H "Authorization: Bearer $TOKEN" -o quotation.pdf
+
+# Cancel (soft — transitions to the existing CANCELLED status; requires QUOTATION_DELETE)
+curl -s -X DELETE http://localhost:8080/api/v1/quotations/$QUOTATION_ID -H "Authorization: Bearer $TOKEN"
+```
+
+Every monetary total (`subtotal`, `discountAmount`, `taxAmount`, `grandTotal`) is always calculated by the backend — there is no request field for any of them, and a raw request body that tries to include one is silently ignored. See [docs/security.md](docs/security.md) and [docs/database.md](docs/database.md) for the calculation formula, rounding strategy, product-snapshot rule, and the cross-tenant customer/product reference validation.
+
 ## Running the Frontend
 
 Not yet available. Will be documented starting in Phase 20 once the Vite project is scaffolded (`cd frontend && npm install && npm run dev`).

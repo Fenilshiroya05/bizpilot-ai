@@ -1,6 +1,6 @@
 # Database
 
-> Status: Phase 9 — `products` and `product_categories` exist (V7 migration), which also extends the Phase 6 `permissions`/`role_permissions` seed data with `PRODUCT_*` permissions — the first migration since V4 to modify RBAC seed data rather than only add new business tables. Built on top of `leads`/`lead_activities` (Phase 8, V6), `customers`/`customer_activities` (Phase 7, V5), `roles`/`permissions`/`user_roles`/`role_permissions` (Phase 6, V4), `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 10 (quotations), per `docs/roadmap.md`.
+> Status: Phase 10 — `quotations` and `quotation_items` exist (V8 migration), the first tables referencing entities from two other business modules (`crm.Customer`, `products.Product`) and the first to carry backend-calculated, persisted financial totals. No RBAC changes — `QUOTATION_*` was already seeded by V4 (Phase 6). Built on top of `products`/`product_categories` (Phase 9, V7), `leads`/`lead_activities` (Phase 8, V6), `customers`/`customer_activities` (Phase 7, V5), `roles`/`permissions`/`user_roles`/`role_permissions` (Phase 6, V4), `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 11 (invoices), per `docs/roadmap.md`.
 
 ## 0. Implementation Notes (Phase 3)
 
@@ -68,6 +68,21 @@
 - **Unit is free text, not an enum**: CLAUDE.md doesn't define whether "Unit" is constrained — free text (e.g. "pcs", "kg", "box") was chosen since businesses use varied, unpredictable units; a hard-coded enum would be too restrictive.
 - **Indexes**: `ix_products_organization_id` (tenant scoping), `ix_products_organization_id_status` (status filtering — no "excluded by default" semantics here, unlike customers/leads, since `INACTIVE` isn't an archive state), `ix_products_category_id` (category filtering and the FK), `ux_products_org_sku` (uniqueness + lookup), `ix_product_categories_organization_id` (tenant scoping for categories). No trigram/full-text index for the free-text `q` search, consistent with Phases 7–8's reasoning.
 
+## 0g. Implementation Notes (Phase 10)
+
+- `V8__create_quotations.sql` adds `quotations` and `quotation_items` — both **explicitly named** in the CLAUDE.md §6 initial-entity list. No RBAC changes: `QUOTATION_READ`/`CREATE`/`UPDATE`/`DELETE` were already seeded by V4 (Phase 6) with the correct role mapping already in place — confirmed by direct inspection before writing any code.
+- **`quotations.customer_id` and `quotation_items.product_id` are the first foreign keys in this project pointing across two different business modules** (`crm.entity.Customer`, `products.entity.Product`) from a single entity. Modeled as ordinary JPA `@ManyToOne` relationships — the same established pattern as `identity.entity.User` referencing `organization.entity.Organization`, not a module-boundary violation, since it's a genuine data relationship rather than one module reaching into another's repository for business logic.
+- **A plain FK cannot enforce cross-tenant integrity.** `customer_id REFERENCES customers(id)` / `product_id REFERENCES products(id)` only guarantee the referenced row exists *somewhere* — `organization_id` is not part of either referenced primary key, so nothing at the database level stops a quotation in Organization A from referencing a customer/product belonging to Organization B. This is why `sales.service.QuotationService` validates *both* references at the application layer via the tenant-safe `findByIdAndOrganizationId` pattern before ever persisting anything — see `V8`'s own migration comments and [security.md](security.md) §3e for the full reasoning. This is an explicit, deliberate limitation of FK-based integrity, not an oversight.
+- **Backend-calculated, persisted totals**: `subtotal`, `discount_amount`, `tax_amount`, `grand_total` on `quotations` (and `line_subtotal`/`line_tax_amount` on `quotation_items`) are always computed by `sales.service.QuotationCalculator` from the authoritative line items and `discount_percentage` — never accepted from the client (CLAUDE.md §14/§41). They are persisted columns, not read-time-derived values, so a quotation's historical totals remain stable and directly queryable even if the calculation logic is refined in a later phase.
+- **Monetary precision**: `NUMERIC(19,4)` for all money fields (matching `products.price`, Phase 9), `NUMERIC(5,2)` for `discount_percentage`/`tax_percentage` (matching `products.tax_percentage`). `RoundingMode.HALF_UP` applied consistently — see `QuotationCalculator`'s Javadoc for the full discount-then-tax, per-line-allocation formula.
+- **Product snapshot rule**: `quotation_items.product_name_snapshot`/`unit_price`/`tax_percentage` are copied from the referenced product at item-creation/replacement time and never re-read from it afterward (`unit_price`/`tax_percentage` are even marked non-updatable at the JPA level) — a later catalog price change must never silently alter an existing quotation's historical values. `quantity` is a `NUMERIC(19,4)` (a `BigDecimal` in Java, not an integer) — an implementation decision, since CLAUDE.md places no constraint on it and `products.unit` is free text (e.g. "kg", "litre"), so fractional quantities are a legitimate real-world case.
+- **No archive field — "delete" is a status transition.** Unlike Customer/Lead/Product, `quotations` has no separate lifecycle column: `QuotationStatus` (the fixed CLAUDE.md §14 6-value enum) already contains `CANCELLED`, so the cancel operation (`DELETE /api/v1/quotations/{id}`) simply transitions to that existing value — idempotent, and financial history is never physically deleted.
+- **`valid_until` is a nullable `DATE`** (not `TIMESTAMPTZ`) — gives the `EXPIRED` status operational meaning (CLAUDE.md §14 names the status but no supporting field) without any scheduled/automatic transition logic, which this phase deliberately does not build.
+- **No `organization_id` column on `quotation_items`** — same "child of a tenant-scoped parent" precedent as `customer_activities`/`lead_activities`: every access path resolves the parent `Quotation` via an organization-scoped lookup first.
+- **Items are managed as a single aggregate, not independent CRUD resources**: `Quotation.items` is a `@OneToMany(cascade = ALL, orphanRemoval = true)` collection: replacing a quotation's items on update clears and re-populates the whole collection in one transaction, rather than exposing item-level add/remove/modify endpoints — the simplest design satisfying "creating/updating a quotation manages its items transactionally."
+- **Lazy-collection/pagination trade-off**: `Quotation.items` is `FetchType.LAZY`, and `spring.jpa.open-in-view=false` means it can't be read after the transactional service method returns unless eagerly joined. A `JOIN FETCH` combined with `Pageable` is a well-known JPA trap (Hibernate paginates in-memory, silently returning wrong page sizes), so the paginated list endpoint deliberately never fetches items at all (returning `QuotationSummaryResponse`, without an item list) while the single-resource endpoints (`get`/`create`/`update`) use a dedicated `findByIdAndOrganizationIdWithItems` query (a `LEFT JOIN FETCH`, safe for a single non-paginated row) — see `QuotationRepository`'s Javadoc.
+- **Indexes**: `ix_quotations_organization_id` (tenant scoping), `ix_quotations_organization_id_status` (status filtering), `ix_quotations_customer_id` (customer filtering and the FK), `ix_quotations_valid_until` (the validity-date filter), `ix_quotation_items_quotation_id`/`ix_quotation_items_product_id` (item lookups and the FK).
+
 ## 1. Engine
 
 - **PostgreSQL** is the primary datastore.
@@ -102,8 +117,8 @@
 | `lead_activities` ✅ (Phase 8) | Backs "activities"/"notes"/"history" (CLAUDE.md §11) in one table — see §0e. |
 | `products` ✅ (Phase 9) | Product catalog items — see §0f. |
 | `product_categories` ✅ (Phase 9) | Product categorization, one-per-product (not many-to-many) — see §0f. |
-| `quotations` | Quotations issued to customers. |
-| `quotation_items` | Line items on a quotation. |
+| `quotations` ✅ (Phase 10) | Quotations issued to customers — see §0g. |
+| `quotation_items` ✅ (Phase 10) | Line items on a quotation, snapshotting product name/price/tax — see §0g. |
 | `invoices` | Invoices issued to customers. |
 | `invoice_items` | Line items on an invoice. |
 | `tasks` | Task management records, optionally linked to a customer/lead. |
@@ -138,6 +153,7 @@ leads 1──* lead_activities
 
 product_categories 1──* products (optional — a product may have no category)
 
+customers 1──* quotations
 quotations 1──* quotation_items
 quotation_items *──1 products
 

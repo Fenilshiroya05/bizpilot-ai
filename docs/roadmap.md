@@ -15,7 +15,7 @@ Status legend: `[x]` complete · `[ ]` not started.
 | 7 | Customers | [x] |
 | 8 | Leads | [x] |
 | 9 | Products | [x] |
-| 10 | Quotations | [ ] |
+| 10 | Quotations | [x] |
 | 11 | Invoices | [ ] |
 | 12 | Tasks | [ ] |
 | 13 | Document management | [ ] |
@@ -150,6 +150,22 @@ No AI Lead Scoring, Products, Quotations, Invoices, Tasks, Documents, AI/RAG, An
 - Security review (background subagent, scoped to the full Phase 9 diff): no CRITICAL, HIGH, or blocking MEDIUM findings; merge-ready. Two MEDIUM test-coverage gaps around the `clearCategory`/`categoryId` interaction were identified (the underlying logic was already correct, just untested for this exact interaction) and **fixed** by adding `updateGivesClearCategoryPrecedenceOverASimultaneouslySuppliedCategoryId` and `updateWithNeitherCategoryIdNorClearCategoryLeavesAnExistingCategoryUnchanged`. Several LOW items noted and deferred as non-blocking, all pre-existing across the codebase rather than introduced by Phase 9: no handler for `MethodArgumentTypeMismatchException` on non-UUID path segments (falls through to a generic 500 — identical gap exists for Customers/Leads), no configured max page size, and JPA entity `@Column` annotations omitting explicit `length` (harmless today since Bean Validation is the only write path, but a latent trap for a future non-DTO creation path).
 
 No Quotations, Invoices, Tasks, Documents, AI/RAG, Analytics, Dashboard, frontend, generic Audit Logging module, generic Rate Limiting module, inventory/stock/warehouse/supplier/purchase management, a discount engine, or any product-to-quotation/invoice foreign key were added in Phase 9 — those belong to Phase 10 onward.
+
+## Phase 10 — Completed Scope
+
+- `sales` module gains `entity/Quotation`, `entity/QuotationItem`, `entity/QuotationStatus` (DRAFT/SENT/ACCEPTED/REJECTED/EXPIRED/CANCELLED — fixed exactly by CLAUDE.md §14), repositories, DTOs, mappers, `QuotationService`, `QuotationCalculator` (a pure, dependency-free financial calculation class), `QuotationPdfService`, `QuotationController`, and dedicated exceptions (`QuotationNotFoundException`, `InvalidCustomerReferenceException`, `InvalidProductReferenceException`, `InvalidQuotationDataException`).
+- **No RBAC migration** — `QUOTATION_READ`/`CREATE`/`UPDATE`/`DELETE` already existed from Phase 6 (V4), unlike Phase 9's `PRODUCT_*`. Confirmed directly against the database before implementation began.
+- **First entity referencing two other business modules**: `Quotation.customer` (`crm.entity.Customer`) and `QuotationItem.product` (`products.entity.Product`), both validated tenant-safe before being persisted — a plain FK alone cannot enforce this, since `organization_id` isn't part of either referenced primary key (documented explicitly in the migration and `docs/database.md`/`docs/security.md`).
+- **Backend-authoritative financial calculation** (CLAUDE.md §14/§41): `subtotal = Σ(quantity × unitPrice)`, discount applied per line (same percentage as the aggregate, for deterministic allocation), tax calculated on the discounted line amount, `grandTotal = taxableAmount + taxAmount`. `NUMERIC(19,4)`/`RoundingMode.HALF_UP` throughout, reusing Phase 9's precision convention. Request DTOs have no total fields at all — nothing for a client to submit, verified by a test sending spoofed `subtotal`/`discountAmount`/`taxAmount`/`grandTotal` values in a raw JSON body and confirming they're silently ignored.
+- **Product snapshot rule**: `QuotationItem` captures `productNameSnapshot`/`unitPrice`/`taxPercentage` from the product at creation/replacement time (the latter two marked non-updatable at the JPA level) — a later catalog price change never alters an existing quotation's historical totals.
+- **Delete/cancel reuses the existing `CANCELLED` status** — no separate archive field, unlike Customer/Lead, since CLAUDE.md's own 6-value status enum already expresses it.
+- **PDF generation** (CLAUDE.md §14, an unconditional requirement): Apache PDFBox (Apache 2.0 license, minimal transitive dependencies — `pdfbox-io`, `fontbox`, `commons-logging`), generated on demand via `GET /api/v1/quotations/{id}/pdf`, never persisted (no storage abstraction exists until Phase 13).
+- Endpoints under `/api/v1/quotations`: create, get, update (PATCH, replaces the entire item collection when items are supplied), cancel (`DELETE`), list/search/filter/paginate (status, customer, valid-until), PDF. List responses omit items (`QuotationSummaryResponse`) to avoid the JPA collection-fetch-join-plus-pagination trap; single-resource responses include full item detail via a dedicated `JOIN FETCH` query.
+- Mandatory tests: `QuotationCalculatorTest` (11 pure unit tests covering multi-line sums, discount-before-tax ordering, rounding, decimal quantities, zero-item edge case, aggregate-vs-per-line discount rounding divergence), `QuotationServiceTest` (17 Mockito unit tests, including archived-customer/inactive-product rejection), `QuotationApiTests` (15 full-context CRUD/validation/search/pagination/PDF tests, including the frontend-spoofed-totals test and a non-WinAnsi-character PDF regression test), `QuotationTenantIsolationTests` (11 tests — cross-org read/update/cancel/PDF/listing all fail as 404, cross-org customer/product references fail as 400, plus body/query/header organization-id-smuggling attempts), `QuotationAuthorizationTests` (5 tests — unauthenticated/EMPLOYEE/SALES/MANAGER permission boundaries, including the PDF endpoint) — 59 new tests. Full suite: 287 backend tests passing, confirming no regression to Phases 1–9.
+- Manual `docker-compose` end-to-end validation performed (see final report for details).
+- A dedicated security/code review found no critical/high issues and two medium findings (PDF crash on non-WinAnsi characters; missing archived-customer/inactive-product reference checks), both fixed before completion — see [security.md §3g](security.md#3g-security-review-findings-phase-10) for details and the three low-severity findings documented as intentionally deferred.
+
+No Invoices, Tasks, Documents, AI/RAG, Analytics, Dashboard, frontend, inventory/stock management, payments, generic Audit Logging module, generic Rate Limiting module, or scheduled/automatic quotation-status transitions were added in Phase 10 — those belong to Phase 11 onward.
 
 ## Process Per Phase
 
