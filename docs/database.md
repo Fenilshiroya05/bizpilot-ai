@@ -1,6 +1,6 @@
 # Database
 
-> Status: Phase 10 — `quotations` and `quotation_items` exist (V8 migration), the first tables referencing entities from two other business modules (`crm.Customer`, `products.Product`) and the first to carry backend-calculated, persisted financial totals. No RBAC changes — `QUOTATION_*` was already seeded by V4 (Phase 6). Built on top of `products`/`product_categories` (Phase 9, V7), `leads`/`lead_activities` (Phase 8, V6), `customers`/`customer_activities` (Phase 7, V5), `roles`/`permissions`/`user_roles`/`role_permissions` (Phase 6, V4), `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 11 (invoices), per `docs/roadmap.md`.
+> Status: Phase 11 — `invoices` and `invoice_items` exist (V9 migration), reusing `quotations`/`quotation_items`' (Phase 10, V8) cross-module-reference pattern (`crm.Customer`, `products.Product`) and backend-calculated persisted totals, but with no discount columns and no `quotation_id` — both confirmed, deliberate omissions (CLAUDE.md §15 never mentions either). V9 also seeds new `INVOICE_*` permissions, following the Phase 9/V7 precedent. Built on top of `quotations`/`quotation_items` (Phase 10, V8), `products`/`product_categories` (Phase 9, V7), `leads`/`lead_activities` (Phase 8, V6), `customers`/`customer_activities` (Phase 7, V5), `roles`/`permissions`/`user_roles`/`role_permissions` (Phase 6, V4), `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 12 (tasks), per `docs/roadmap.md`.
 
 ## 0. Implementation Notes (Phase 3)
 
@@ -83,6 +83,17 @@
 - **Lazy-collection/pagination trade-off**: `Quotation.items` is `FetchType.LAZY`, and `spring.jpa.open-in-view=false` means it can't be read after the transactional service method returns unless eagerly joined. A `JOIN FETCH` combined with `Pageable` is a well-known JPA trap (Hibernate paginates in-memory, silently returning wrong page sizes), so the paginated list endpoint deliberately never fetches items at all (returning `QuotationSummaryResponse`, without an item list) while the single-resource endpoints (`get`/`create`/`update`) use a dedicated `findByIdAndOrganizationIdWithItems` query (a `LEFT JOIN FETCH`, safe for a single non-paginated row) — see `QuotationRepository`'s Javadoc.
 - **Indexes**: `ix_quotations_organization_id` (tenant scoping), `ix_quotations_organization_id_status` (status filtering), `ix_quotations_customer_id` (customer filtering and the FK), `ix_quotations_valid_until` (the validity-date filter), `ix_quotation_items_quotation_id`/`ix_quotation_items_product_id` (item lookups and the FK).
 
+## 0h. Implementation Notes (Phase 11)
+
+- `V9__create_invoices.sql` adds `invoices` and `invoice_items` — both **explicitly named** in the CLAUDE.md §6 initial-entity list — plus `INVOICE_READ`/`CREATE`/`UPDATE`/`DELETE`, which did **not** already exist (unlike Quotation's permissions in Phase 10). Follows the exact Phase 9/V7 pattern for adding new permission rows/role mappings without touching V4's existing rows.
+- **Structurally near-identical to `quotations`/`quotation_items`** (Phase 10): same cross-module FK pattern to `crm.Customer`/`products.Product`, same FK-insufficiency-for-tenant-isolation caveat (enforced at the application layer in `InvoiceService`, identically to `QuotationService`), same backend-calculated-and-persisted totals, same product-snapshot rule (`unit_price`/`tax_percentage` non-updatable at the JPA level), same "no `organization_id` on the item table" precedent, same lazy-collection/pagination trade-off (`findByIdAndOrganizationIdWithItems` for single-resource reads, a non-fetching `search` query for the paginated list).
+- **Two confirmed, deliberate differences from `quotations`**:
+  - **No discount columns** (`discount_percentage`/`discount_amount`) — CLAUDE.md §15 never mentions an invoice discount, unlike §14 for quotations. `total = subtotal + tax_amount` only.
+  - **No `quotation_id` column** — CLAUDE.md never describes converting a quotation into an invoice anywhere in the document; invoices are created independently, with their own customer and items.
+- **Immutability is enforced at the service layer, not the schema.** There is no database constraint preventing an `UPDATE` on a non-`DRAFT` invoice's columns — Postgres has no way to express "this row's mutability depends on the value of its own `status` column" cleanly across the whole row. `sales.service.InvoiceService.update` is the single enforcement point: it rejects the entire request unless `status == 'DRAFT'`. See [security.md](security.md) §3h for the full reasoning behind reading CLAUDE.md's genuinely ambiguous wording this strictly.
+- **Cancellation is financially inert.** `InvoiceService.cancel` sets `status = 'CANCELLED'` and saves — it never recalculates `subtotal`/`tax_amount`/`total`, so a cancelled invoice's persisted totals are exactly what they were the instant before cancellation.
+- **Indexes**: `ix_invoices_organization_id`, `ix_invoices_organization_id_status`, `ix_invoices_customer_id`, `ix_invoices_due_date`, `ix_invoice_items_invoice_id`, `ix_invoice_items_product_id` — mirrors `quotations`' index set with `due_date` replacing `valid_until`.
+
 ## 1. Engine
 
 - **PostgreSQL** is the primary datastore.
@@ -119,8 +130,8 @@
 | `product_categories` ✅ (Phase 9) | Product categorization, one-per-product (not many-to-many) — see §0f. |
 | `quotations` ✅ (Phase 10) | Quotations issued to customers — see §0g. |
 | `quotation_items` ✅ (Phase 10) | Line items on a quotation, snapshotting product name/price/tax — see §0g. |
-| `invoices` | Invoices issued to customers. |
-| `invoice_items` | Line items on an invoice. |
+| `invoices` ✅ (Phase 11) | Invoices issued to customers — no discount, no quotation reference (see §0h). |
+| `invoice_items` ✅ (Phase 11) | Line items on an invoice, snapshotting product name/price/tax — see §0h. |
 | `tasks` | Task management records, optionally linked to a customer/lead. |
 | `documents` | Uploaded document metadata and processing status. |
 | `document_chunks` | Chunked, embedded document text for RAG (PGVector column). |
@@ -157,8 +168,10 @@ customers 1──* quotations
 quotations 1──* quotation_items
 quotation_items *──1 products
 
+customers 1──* invoices
 invoices 1──* invoice_items
 invoice_items *──1 products
+-- No quotations <-> invoices relationship (deliberately not implemented — see §0h)
 
 documents 1──* document_chunks
 

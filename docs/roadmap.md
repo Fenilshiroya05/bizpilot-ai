@@ -16,7 +16,7 @@ Status legend: `[x]` complete · `[ ]` not started.
 | 8 | Leads | [x] |
 | 9 | Products | [x] |
 | 10 | Quotations | [x] |
-| 11 | Invoices | [ ] |
+| 11 | Invoices | [x] |
 | 12 | Tasks | [ ] |
 | 13 | Document management | [ ] |
 | 14 | Spring AI foundation | [ ] |
@@ -166,6 +166,22 @@ No Quotations, Invoices, Tasks, Documents, AI/RAG, Analytics, Dashboard, fronten
 - A dedicated security/code review found no critical/high issues and two medium findings (PDF crash on non-WinAnsi characters; missing archived-customer/inactive-product reference checks), both fixed before completion — see [security.md §3g](security.md#3g-security-review-findings-phase-10) for details and the three low-severity findings documented as intentionally deferred.
 
 No Invoices, Tasks, Documents, AI/RAG, Analytics, Dashboard, frontend, inventory/stock management, payments, generic Audit Logging module, generic Rate Limiting module, or scheduled/automatic quotation-status transitions were added in Phase 10 — those belong to Phase 11 onward.
+
+## Phase 11 — Completed Scope
+
+- `sales` module gains `entity/Invoice`, `entity/InvoiceItem`, `entity/InvoiceStatus` (DRAFT/ISSUED/PARTIALLY_PAID/PAID/OVERDUE/CANCELLED — fixed exactly by CLAUDE.md §15), repository, DTOs, mappers, `InvoiceService`, `InvoiceCalculator` (pure, dependency-free — mirrors `QuotationCalculator` minus the discount step), `InvoicePdfService`, `InvoiceController`, and dedicated exceptions (`InvoiceNotFoundException`, `InvalidInvoiceDataException`, `InvoiceNotEditableException`) — plus reuse of the existing, generalized `InvalidCustomerReferenceException`/`InvalidProductReferenceException`.
+- **New RBAC migration** — unlike Quotation (Phase 10), `INVOICE_READ`/`CREATE`/`UPDATE`/`DELETE` did not already exist in CLAUDE.md's permission catalog; added in `V9` following the exact Phase 9/`PRODUCT_*` precedent (OWNER/ADMIN/MANAGER full CRUD, SALES no delete, EMPLOYEE read-only), without touching V4's existing rows.
+- **No discount, no quotation reference** — both explicit, confirmed scope decisions (CLAUDE.md §15 never mentions either): `total = subtotal + taxAmount` only; invoices are created independently, with their own customer and items.
+- **Hard immutability rule, the first of its kind in this project**: once an invoice leaves `DRAFT`, `PATCH /api/v1/invoices/{id}` rejects the entire request with `409 CONFLICT` (`INVOICE_NOT_EDITABLE`) — customer, items, due date, and status all become frozen. Chosen as the stricter of two readings of a genuinely ambiguous prompt; documented consequence: no in-phase mechanism exists to progress `ISSUED → PARTIALLY_PAID → PAID` (only to `CANCELLED`, via the separate cancel action), since CLAUDE.md explicitly forbids inventing a payment subsystem and names no such endpoint. See [security.md §3h](security.md#3h-implementation-notes-phase-11--immutability-as-a-data-integrity-boundary-not-just-a-business-preference).
+- **Product snapshot rule and tenant-safe reference validation reused verbatim from Phase 10**, including the archived-customer/inactive-product checks added by that phase's own security review — applied to invoices from day one.
+- **Cancellation is financially inert**: `DELETE /api/v1/invoices/{id}` transitions to `CANCELLED` (idempotent, no physical delete) without recalculating or otherwise touching `subtotal`/`taxAmount`/`total`.
+- **PDF generation**: reuses the existing Apache PDFBox dependency and the Phase 10 WinAnsiEncoding-sanitization fix verbatim — no new dependency.
+- Endpoints under `/api/v1/invoices`: create, get, update (PATCH, DRAFT-only), cancel (`DELETE`), list/search/filter/paginate (status, customer, due-date), PDF. Same summary/detail response-shape split as Quotation to avoid the JPA collection-fetch-join-plus-pagination trap.
+- Mandatory tests: `InvoiceCalculatorTest` (9 pure unit tests), `InvoiceServiceTest` (22 Mockito unit tests, including a parameterized test rejecting updates across all 5 non-DRAFT statuses), `InvoiceApiTests` (15 full-context CRUD/validation/search/pagination/PDF tests, including the frontend-spoofed-totals test and a non-WinAnsi-character PDF regression test), `InvoiceTenantIsolationTests` (11 tests), `InvoiceAuthorizationTests` (5 tests) — 62 new tests, plus a required update to the pre-existing Phase 6 `RoleSeedDataTests` (its fixed expected-permission-set literals now include `INVOICE_*`, the same kind of update Phase 9 made to it for `PRODUCT_*`). Full suite: 349 backend tests passing, confirming no regression to Phases 1–10.
+- Manual `docker-compose` end-to-end validation performed (see final report for details).
+- A dedicated security/code review found no critical/high/medium findings — every tenant-isolation, RBAC, mass-assignment, and reference-validation control was reused directly from Phase 10's already-hardened implementation. See [security.md §3i](security.md#3i-security-review-findings-phase-11).
+
+No Payments/payment gateway, Tasks, Documents/storage, AI/RAG, AI assistant/tool calling/lead scoring, Analytics, Dashboard, frontend, inventory, notifications, generic audit logging, generic rate limiting, scheduled jobs, or quotation-to-invoice conversion were added in Phase 11 — those belong to Phase 12 onward (or, for payments, are never in scope per CLAUDE.md).
 
 ## Process Per Phase
 

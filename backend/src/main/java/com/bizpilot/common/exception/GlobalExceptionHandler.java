@@ -14,9 +14,12 @@ import com.bizpilot.products.exception.ProductCategoryNotFoundException;
 import com.bizpilot.products.exception.ProductNotFoundException;
 import com.bizpilot.sales.exception.InvalidAssigneeException;
 import com.bizpilot.sales.exception.InvalidCustomerReferenceException;
+import com.bizpilot.sales.exception.InvalidInvoiceDataException;
 import com.bizpilot.sales.exception.InvalidLeadDataException;
 import com.bizpilot.sales.exception.InvalidProductReferenceException;
 import com.bizpilot.sales.exception.InvalidQuotationDataException;
+import com.bizpilot.sales.exception.InvoiceNotEditableException;
+import com.bizpilot.sales.exception.InvoiceNotFoundException;
 import com.bizpilot.sales.exception.LeadArchivedException;
 import com.bizpilot.sales.exception.LeadNotFoundException;
 import com.bizpilot.sales.exception.QuotationNotFoundException;
@@ -339,6 +342,41 @@ public class GlobalExceptionHandler {
                 request.getRequestURI()
         );
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(InvoiceNotFoundException.class)
+    public ResponseEntity<ApiError> handleInvoiceNotFound(InvoiceNotFoundException ex, HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.NOT_FOUND.value(),
+                "INVOICE_NOT_FOUND",
+                "Invoice not found",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+    }
+
+    @ExceptionHandler(InvalidInvoiceDataException.class)
+    public ResponseEntity<ApiError> handleInvalidInvoiceData(InvalidInvoiceDataException ex,
+                                                                HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "INVALID_INVOICE_DATA",
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(InvoiceNotEditableException.class)
+    public ResponseEntity<ApiError> handleInvoiceNotEditable(InvoiceNotEditableException ex,
+                                                                HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.CONFLICT.value(),
+                "INVOICE_NOT_EDITABLE",
+                "Only DRAFT invoices can be updated",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

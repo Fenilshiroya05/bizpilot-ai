@@ -299,6 +299,33 @@ curl -s -X DELETE http://localhost:8080/api/v1/quotations/$QUOTATION_ID -H "Auth
 
 Every monetary total (`subtotal`, `discountAmount`, `taxAmount`, `grandTotal`) is always calculated by the backend — there is no request field for any of them, and a raw request body that tries to include one is silently ignored. See [docs/security.md](docs/security.md) and [docs/database.md](docs/database.md) for the calculation formula, rounding strategy, product-snapshot rule, and the cross-tenant customer/product reference validation.
 
+### Invoices (Phase 11)
+
+```bash
+# Create an invoice (requires INVOICE_CREATE — no discount field exists;
+# unitPrice/taxPercentage are always snapshotted from the product)
+curl -s -X POST http://localhost:8080/api/v1/invoices \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"customerId":"'"$CUSTOMER_ID"'","dueDate":"2026-10-01","items":[{"productId":"'"$PRODUCT_ID"'","quantity":2}]}'
+
+# Update a DRAFT invoice — e.g. issue it (any other status is rejected here
+# with 409 CONFLICT once the invoice has already left DRAFT)
+curl -s -X PATCH http://localhost:8080/api/v1/invoices/$INVOICE_ID \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"status":"ISSUED"}'
+
+# List/search/filter/paginate
+curl -s "http://localhost:8080/api/v1/invoices?status=DRAFT&customerId=$CUSTOMER_ID&page=0&size=20" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Download the invoice as a PDF (generated on demand, never persisted)
+curl -s http://localhost:8080/api/v1/invoices/$INVOICE_ID/pdf -H "Authorization: Bearer $TOKEN" -o invoice.pdf
+
+# Cancel (soft — transitions to the existing CANCELLED status; requires INVOICE_DELETE)
+curl -s -X DELETE http://localhost:8080/api/v1/invoices/$INVOICE_ID -H "Authorization: Bearer $TOKEN"
+```
+
+Every monetary total (`subtotal`, `taxAmount`, `total`) is always calculated by the backend — same rule as Quotations. **Immutability**: once an invoice leaves `DRAFT` (e.g. via the `status:"ISSUED"` update above), it becomes fully locked — any further `PATCH` (customer, items, due date, or status) is rejected with `409 CONFLICT`/`INVOICE_NOT_EDITABLE`, regardless of which field is being changed. The only remaining operation on a non-DRAFT invoice is cancellation (`DELETE`), which never alters its financial contents. There is no discount field and no link to a quotation — see [docs/security.md](docs/security.md) and [docs/database.md](docs/database.md) for the full reasoning, including why CLAUDE.md's own wording on this point was read strictly.
+
 ## Running the Frontend
 
 Not yet available. Will be documented starting in Phase 20 once the Vite project is scaffolded (`cd frontend && npm install && npm run dev`).

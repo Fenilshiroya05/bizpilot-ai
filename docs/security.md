@@ -1,6 +1,6 @@
 # Security
 
-> Status: Phase 10 — Quotations are implemented: the first resource with two independent cross-tenant reference validations (customer + product per line item) and the first backend-authoritative financial calculation chain in the project (CLAUDE.md §14/§41 — totals are never trusted from the client). Reuses the `QUOTATION_*` permissions already seeded by Phase 6 (V4) — no new RBAC migration was needed, unlike Phase 9. Email verification and forgot/reset-password are acknowledged CLAUDE.md requirements **not yet implemented** — deferred to a later authentication pass (see §1a).
+> Status: Phase 11 — Invoices are implemented: the first resource with a hard immutability rule (financial/identity content is only editable while `status == DRAFT`; a non-DRAFT invoice rejects `PATCH` outright as `409 CONFLICT`, per CLAUDE.md §15). Reuses the tenant-safe customer/product reference validation pattern from Phase 10, including the archived-customer/inactive-product checks added there. Adds new `INVOICE_*` permissions (V9, following the Phase 9 `PRODUCT_*` precedent — CLAUDE.md §9's own catalog is illustrative, not closed). Email verification and forgot/reset-password are acknowledged CLAUDE.md requirements **not yet implemented** — deferred to a later authentication pass (see §1a).
 
 Priority order for this entire project: **Security > Correctness > Maintainability > Testability > Performance > Convenience.**
 
@@ -82,6 +82,13 @@ Priority order for this entire project: **Security > Correctness > Maintainabili
 - `sales.controller.QuotationController` follows the identical `@PreAuthorize("hasAuthority('QUOTATION_*')")` pattern as `CustomerController`/`LeadController`/`ProductController`. The PDF endpoint (`GET /api/v1/quotations/{id}/pdf`) is gated by `QUOTATION_READ` (it's a read-only rendering of existing data, not a mutation).
 - Verified end-to-end against real seeded roles: `QuotationAuthorizationTests` proves EMPLOYEE (read-only) is forbidden from create/update/cancel, SALES (CRUD minus delete) is forbidden from cancelling, and MANAGER (full CRUD) can perform every operation including cancel and PDF generation.
 
+### 2f. Implementation Notes (Phase 11 — extending the permission catalog again)
+
+- **`INVOICE_READ`/`CREATE`/`UPDATE`/`DELETE` did not exist before this phase** — CLAUDE.md §9's original catalog names neither Invoices nor Products, and (unlike Quotation, which Phase 6/V4 already covered) no prior phase seeded them. Added in `V9__create_invoices.sql`, following the exact Phase 9/V7 precedent: new permission rows plus role mappings, scoped by `p.name IN ('INVOICE_...')` so the migration can never collide with V4/V7/V8's existing rows. **V4 itself was not modified.**
+- Role mapping is identical in philosophy to every other business resource: OWNER/ADMIN/MANAGER = full CRUD, SALES = CRUD minus delete, EMPLOYEE = read-only.
+- `sales.controller.InvoiceController` follows the identical `@PreAuthorize("hasAuthority('INVOICE_*')")` pattern. The PDF endpoint is gated by `INVOICE_READ`.
+- Verified end-to-end: `InvoiceAuthorizationTests` proves EMPLOYEE is forbidden from create/update/cancel, SALES is forbidden from cancelling, MANAGER can perform every operation including cancel and PDF generation.
+
 ## 3. Multi-Tenancy / Tenant Isolation
 
 - The current organization is derived **only** from the authenticated user's security context — never from a client-supplied `organizationId`, header, or query parameter.
@@ -147,6 +154,22 @@ Three low-severity findings, documented here as intentionally deferred (per the 
 - **Aggregate `discountAmount` can diverge from the sum of independently-rounded per-line discount shares by a sub-cent (at `MONEY_SCALE`) rounding amount.** Already disclosed in `QuotationCalculator`'s own Javadoc as a known tradeoff of computing the aggregate discount directly from the aggregate subtotal rather than summing per-line shares; now also covered by an explicit regression test (`QuotationCalculatorTest.aggregateDiscountAmountCanDivergeFromTheSumOfPerLineDiscountSharesBySubCentRounding`) that exercises a concrete case where the divergence occurs, rather than only asserting it away.
 - **PDF rendering has no page-overflow handling.** A quotation with enough line items to exceed a single A4 page will render items past the bottom margin rather than starting a new page. Deferred: no current phase requirement calls for multi-page quotations, and adding pagination logic now would be speculative for a shape of data (line-item count) this phase doesn't otherwise bound.
 - **`pom.xml`'s PDFBox dependency comment inaccuracy** ("fontbox/xmpbox only") did not match the actual transitive dependency tree (`pdfbox-io`, `fontbox`, `commons-logging`; no `xmpbox`) — fixed as a one-line cosmetic correction alongside the other Phase 10 fixes.
+
+### 3h. Implementation Notes (Phase 11 — immutability as a data-integrity boundary, not just a business preference)
+
+- **Tenant isolation and reference validation are identical to Phase 10.** `InvoiceService` reuses `findByIdAndOrganizationId`/`findByIdAndOrganizationIdWithItems` and the exact same `InvalidCustomerReferenceException`/`InvalidProductReferenceException` classes `QuotationService` uses (generalized slightly — their reason-carrying constructor no longer says "quotation" specifically, since it's now shared by two services). Archived-customer and inactive-product rejection (the Phase 10 security-review fix) applies to invoices from day one, not as a later fix.
+- **Immutability is enforced once, at the top of `InvoiceService.update`**: `if (!invoice.isDraft()) throw new InvoiceNotEditableException(id);` — a single guard that rejects the entire request (customer, items, due date, status — everything) unless the invoice's current status is `DRAFT`. This is a deliberate reading of a genuinely ambiguous prompt (CLAUDE.md §15/§20/§24 each independently and unconditionally say "only DRAFT invoices may be updated," while a separate clause about "payment-status update API... if needed" gestures at wanting *some* way to progress `ISSUED → PARTIALLY_PAID → PAID`). The stricter, three-times-repeated reading was chosen. **Known, documented consequence**: once an invoice is issued via this endpoint, there is no supported way in this phase to move it further through `PARTIALLY_PAID`/`PAID`/`OVERDUE` — only to `CANCELLED`, via the separate cancel action. No separate payment-status endpoint was built, since CLAUDE.md explicitly forbids inventing a payment subsystem and names no such endpoint.
+- **`InvoiceNotEditableException` → `409 CONFLICT`**, the same status-code family as `CustomerArchivedException`/`LeadArchivedException` — the request is well-formed, but the resource's current state forbids the operation.
+- **Cancellation never touches financial fields.** `InvoiceService.cancel` only sets `status = CANCELLED` and saves — it does not call `recalculate`, so a cancelled invoice's `subtotal`/`taxAmount`/`total` are frozen exactly as they were the moment before cancellation, per CLAUDE.md §15's "cancellation should also not mutate the financial contents of the invoice." Verified by `InvoiceServiceTest.cancelDoesNotRecalculateOrMutateFinancialContents`.
+- **No discount, no quotation reference** — both are confirmed, deliberate omissions (CLAUDE.md §15 never mentions either), not oversights. `invoices`/`invoice_items` have no `discount_*` columns and no `quotation_id` column.
+
+### 3i. Security Review Findings (Phase 11)
+
+A dedicated security/code review was run against the full Phase 11 diff before completion, per the standing "fix any critical/high/medium finding before completion" rule. Findings:
+
+- No CRITICAL/HIGH findings — tenant isolation, RBAC, mass-assignment protection, and reference validation all directly reuse the already-hardened Phase 10 patterns.
+- Verified explicitly and confirmed safe: IDOR (every lookup organization-scoped, tested by `InvoiceTenantIsolationTests`), client-controlled totals (no total field exists on any request DTO, tested by `InvoiceApiTests.frontendSuppliedTotalsAreCompletelyIgnored`), unauthorized status changes/cancellation/PDF access (RBAC-gated and tenant-scoped, tested by `InvoiceAuthorizationTests`/`InvoiceTenantIsolationTests`), modification of an issued/paid invoice (blocked unconditionally by `InvoiceNotEditableException`, tested by `InvoiceServiceTest.updateIsRejectedForAnyNonDraftInvoice` parameterized across all five non-DRAFT statuses), PDF resource handling and non-WinAnsi character safety (reused verbatim from the Phase 10 fix, tested by `InvoiceApiTests.pdfEndpointRendersNonWinAnsiCharactersInsteadOfCrashing`).
+- No new LOW findings beyond the ones already documented and deferred in §3g (those apply to `QuotationCalculator`/`QuotationPdfService` specifically and have no invoice equivalent, since `InvoiceCalculator` has no discount step to diverge on).
 
 ## 4. AI-Specific Security
 
