@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 2 — the backend foundation described below (application bootstrap, configuration, actuator health, centralized exception handling) exists and is validated. Business modules (`identity`, `organization`, `crm`, `sales`, `products`, `documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 3 — the backend foundation (Phase 2) plus the database foundation described below (datasource, JPA/Hibernate, Flyway) exist and are validated end-to-end. Business modules (`identity`, `organization`, `crm`, `sales`, `products`, `documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -8,7 +8,14 @@
 - Configuration: `application.yml` (defaults, env-var driven) with a `local` profile (`application-local.yml`) active by default, and a `test` profile (`application-test.yml`) used by the test suite. No secrets or environment-specific URLs are hard-coded.
 - Actuator: only the `health` endpoint is exposed, with `show-details: never` — no internal details leak through `/actuator/health`.
 - `common/exception/GlobalExceptionHandler` + `common/response/ApiError` implement the centralized error-response contract defined in [security.md](security.md) (`timestamp`, `status`, `code`, `message`, `path`), with a validation-specific handler and a catch-all handler that logs server-side but never returns stack traces to the client.
-- No datasource, security, or messaging dependencies are wired in yet — those arrive in Phase 3 (database), Phase 4 (authentication), and later phases respectively.
+- No security or messaging dependencies are wired in yet — those arrive in Phase 4 (authentication) and later phases respectively.
+
+## 1b. Database Foundation (Phase 3)
+
+- Datasource, JPA/Hibernate, and Flyway are configured in `application.yml`, driven entirely by `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USERNAME`/`DB_PASSWORD` environment variables — no defaults for `DB_PASSWORD`.
+- `spring.jpa.hibernate.ddl-auto=validate` — Hibernate never creates/alters schema; Flyway (`backend/src/main/resources/db/migration/`) is the sole migration authority, per [database.md](database.md).
+- `common/persistence/BaseEntity` + `common/config/JpaConfig` provide the UUID id / `created_at` / `updated_at` foundation every future entity builds on.
+- Full details, including the deferred tenant-scoped base entity and the Testcontainers-based test setup, are in [database.md](database.md).
 
 ## 1. Style
 

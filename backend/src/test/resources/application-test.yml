@@ -1,6 +1,11 @@
 spring:
   application:
     name: bizpilot-backend-test
+  flyway:
+    # Adds test-only fixture tables (e.g. for BaseEntity persistence tests) on
+    # top of the real production migrations. Never applied outside the test
+    # profile, so production schema is unaffected.
+    locations: classpath:db/migration,classpath:db/testmigration
 
 logging:
   level:

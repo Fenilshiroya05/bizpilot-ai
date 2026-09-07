@@ -1,6 +1,15 @@
 # Database
 
-> Status: Phase 1 — describes the target schema and conventions. No Flyway migrations or JPA entities exist yet; those are introduced in Phase 3 onward.
+> Status: Phase 3 — the database foundation (datasource, JPA/Hibernate, Flyway) is wired and validated end-to-end. No business tables exist yet; those are introduced incrementally starting Phase 5 (organizations), per `docs/roadmap.md`.
+
+## 0. Implementation Notes (Phase 3)
+
+- **Connection**: `spring.datasource.*` in `application.yml` is built entirely from environment variables — `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD` (see `.env.example`). `DB_PASSWORD` has no default; the app fails fast at startup if it's unset rather than falling back to an insecure default.
+- **Hibernate**: `spring.jpa.hibernate.ddl-auto=validate` — Hibernate never creates or alters schema; Flyway is the sole migration authority (CLAUDE.md §6, §33).
+- **Flyway**: migrations live in `backend/src/main/resources/db/migration/`, versioned `V1__initial_schema.sql`, `V2__...`, etc., and are immutable once merged. `V1__initial_schema.sql` currently only enables the `vector` (PGVector) extension — no business tables yet, since those belong to later phases.
+- **Base persistence support**: `com.bizpilot.common.persistence.BaseEntity` is a `@MappedSuperclass` providing a JPA-generated `UUID` id plus `created_at`/`updated_at` auditing (via Spring Data JPA auditing, enabled in `common/config/JpaConfig`). Every future entity extends it.
+- **Tenant-scoped base entity**: deferred until Phase 5, when the `organizations` table exists. At that point, a `TenantScopedEntity extends BaseEntity` (adding `organization_id`) will be introduced, and every business entity from Phase 7 onward extends *that* instead of `BaseEntity` directly.
+- **Testing**: `backend/src/test/java/com/bizpilot/TestcontainersConfiguration.java` provides a real, containerized PostgreSQL (`pgvector/pgvector:pg16`, matching `docker-compose.yml`) via Spring Boot's `@ServiceConnection`, used by both application-context tests and a dedicated `BaseEntityPersistenceTest` (which round-trips a test-only fixture entity/table defined only under `src/test/**`, activated only in the `test` profile — never part of production migrations or schema).
 
 ## 1. Engine
 
@@ -47,9 +56,9 @@
 | `ai_tool_calls` | Log of AI tool invocations, inputs, and results. |
 | `ai_usage` | AI request/token/cost/duration tracking for future billing. |
 
-Exact columns, constraints, and relationships will be finalized and delivered as Flyway migrations in **Phase 3 (Database + Flyway)**.
+Exact columns, constraints, and relationships are finalized and delivered as Flyway migrations incrementally, each by the phase that owns that table (e.g. `organizations` in Phase 5, `customers` in Phase 7) — see `docs/roadmap.md`. Phase 3 only established the datasource/JPA/Flyway foundation these migrations build on.
 
-## 4. Relationships (indicative, subject to refinement in Phase 3)
+## 4. Relationships (indicative, subject to refinement as each table is introduced)
 
 ```text
 organizations 1──* users

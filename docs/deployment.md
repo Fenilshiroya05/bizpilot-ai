@@ -1,6 +1,6 @@
 # Deployment
 
-> Status: Phase 2 — the backend now has a working multi-stage `backend/Dockerfile` and is wired into `docker-compose.yml`. CI/CD pipelines and production hardening are still delivered in Phase 29 and 30 respectively; this document is the reference those phases implement against.
+> Status: Phase 3 — the backend now connects to PostgreSQL and runs Flyway migrations on startup, both natively and via `docker-compose.yml`. CI/CD pipelines and production hardening are still delivered in Phase 29 and 30 respectively; this document is the reference those phases implement against.
 
 ## 1. Environments
 
@@ -24,7 +24,9 @@ docker compose up -d --build
 curl http://localhost:8080/actuator/health
 ```
 
-The `backend` service does not yet declare a `depends_on` relationship to `postgres`/`redis`/`kafka` — the Phase 2 codebase doesn't talk to any of them. That dependency is added once the backend actually integrates with each (Phase 3 for the database, later phases for Redis/Kafka).
+The `backend` service now declares `depends_on: postgres: condition: service_healthy` and receives `DB_HOST=postgres`/`DB_PORT`/`DB_NAME`/`DB_USERNAME`/`DB_PASSWORD` — Flyway migrations run automatically against the containerized Postgres at startup. It does not yet depend on `redis`/`kafka` — the codebase doesn't talk to either yet; that's added once the backend integrates with each in a later phase.
+
+> **Note:** if this machine already runs a native (non-Docker) PostgreSQL or something else bound to host ports 5432/8080, the *published* host ports in `docker-compose.yml` may not be reachable, even though the containers themselves start and connect to each other correctly over the internal Docker network (verified during Phase 3). Check `lsof -nP -iTCP:5432 -sTCP:LISTEN` / `:8080` if `curl localhost:8080/actuator/health` doesn't respond, and remap the published port in `docker-compose.yml` if needed — this is a host environment conflict, not a BizPilot AI configuration issue.
 
 ## 3. Containers
 

@@ -1,0 +1,13 @@
+-- Phase 3: Database foundation.
+--
+-- This migration intentionally creates no business tables. Business schema
+-- (organizations, users, customers, ...) is introduced incrementally by the
+-- phase that owns it (see docs/roadmap.md), each as its own new migration.
+--
+-- It only enables the PostgreSQL extension BizPilot AI's data layer depends
+-- on: pgvector, used for embedding storage and similarity search once
+-- document ingestion / RAG are implemented (Phase 15+). Enabling it now,
+-- against the same pgvector/pgvector:pg16 image used in docker-compose.yml
+-- and Testcontainers-based tests, proves the database foundation (datasource,
+-- Flyway, JPA) is wired correctly end-to-end.
+CREATE EXTENSION IF NOT EXISTS vector;

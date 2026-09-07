@@ -7,8 +7,8 @@ Status legend: `[x]` complete · `[ ]` not started.
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Repository structure + documentation + CLAUDE.md | [x] |
-| 2 | Backend foundation | [ ] |
-| 3 | Database + Flyway | [ ] |
+| 2 | Backend foundation | [x] |
+| 3 | Database + Flyway | [x] |
 | 4 | Authentication | [ ] |
 | 5 | Organizations + multi-tenancy | [ ] |
 | 6 | RBAC | [ ] |
@@ -49,6 +49,26 @@ Status legend: `[x]` complete · `[ ]` not started.
 - This roadmap document.
 
 No business logic, entities, controllers, services, or UI components were created in Phase 1, per the project's incremental-build rule (`CLAUDE.md § 2`).
+
+## Phase 2 — Completed Scope
+
+- Spring Boot application bootstrap (`com.bizpilot.BizPilotApplication`), Maven build (`backend/pom.xml`, `./mvnw`), environment-driven configuration (`application.yml`, `local`/`test` profiles).
+- Actuator `health` endpoint only, no sensitive details exposed.
+- Centralized exception handling foundation (`common/exception/GlobalExceptionHandler`, `common/response/ApiError`) implementing the error contract in `docs/security.md`.
+- Test foundation (`BizPilotApplicationTests`, `HealthEndpointTests`) and a working multi-stage `backend/Dockerfile`, wired into `docker-compose.yml`.
+
+No datasource, security, or business-module code was added in Phase 2.
+
+## Phase 3 — Completed Scope
+
+- PostgreSQL datasource, JPA/Hibernate, and Flyway wired via environment variables (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`), `ddl-auto=validate` (Flyway is the sole schema authority).
+- `backend/src/main/resources/db/migration/V1__initial_schema.sql` — enables the `vector` (PGVector) extension only; no business tables.
+- `common/persistence/BaseEntity` (UUID id + `created_at`/`updated_at` auditing) and `common/config/JpaConfig` (`@EnableJpaAuditing`), reusable by every future entity.
+- `docker-compose.yml` backend service now depends on `postgres` being healthy and receives `DB_*` configuration.
+- Testcontainers-based test foundation (`TestcontainersConfiguration`, real `pgvector/pgvector:pg16` container) and a `BaseEntityPersistenceTest` proving id generation and auditing timestamps through a real persistence round-trip.
+- `.env.example` and `docs/database.md` updated to match the `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USERNAME`/`DB_PASSWORD` convention.
+
+No authentication, organizations/multi-tenancy schema, RBAC, or other business tables were added in Phase 3 — those belong to Phase 4 onward.
 
 ## Process Per Phase
 

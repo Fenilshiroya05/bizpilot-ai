@@ -136,7 +136,7 @@ Prerequisites:
 - Maven 3.9+ (or use the bundled `./mvnw` wrapper — no local Maven install required)
 - Node.js 20+ and npm/pnpm (needed starting Phase 20 — not yet required)
 - Docker and Docker Compose
-- PostgreSQL client tools (optional, for local inspection — not required until Phase 3)
+- PostgreSQL client tools (optional, for local inspection)
 
 > **Note for Valtech-managed machines:** this is a personal, non-client project. The backend's `backend/.mvn/settings.xml` + `backend/.mvn/maven.config` scope Maven builds in this repo to public Maven Central, so they don't depend on (or get blocked by) the corporate Nexus mirror configured in your global `~/.m2/settings.xml`. Nothing in your global Maven configuration is modified.
 
@@ -148,15 +148,17 @@ Copy the template and fill in real values locally — **never commit `.env`**:
 cp .env.example .env
 ```
 
-See [.env.example](.env.example) for the full list of supported variables (database, JWT, AI provider/API key, Redis, Kafka, storage, CORS, application URL). The Phase 2 backend foundation itself only reads `SERVER_PORT` and `SPRING_PROFILES_ACTIVE` (both optional, with sensible defaults) — the rest become relevant in later phases.
+See [.env.example](.env.example) for the full list of supported variables (database, JWT, AI provider/API key, Redis, Kafka, storage, CORS, application URL). As of Phase 3, the backend reads `SERVER_PORT`, `SPRING_PROFILES_ACTIVE`, and the database variables `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD` (all have sensible defaults except `DB_PASSWORD`, which is required — the app fails fast at startup without it). The rest become relevant in later phases.
 
 ## Running the Backend
 
-From the `backend/` directory:
+The backend needs a running PostgreSQL to start (Flyway migrations run on startup). Start it via Docker, then run the backend natively:
 
 ```bash
+export DB_PASSWORD=changeme   # or set it in .env and use `docker compose --env-file .env up -d postgres`
+docker compose up -d postgres
 cd backend
-./mvnw spring-boot:run
+DB_PASSWORD=$DB_PASSWORD ./mvnw spring-boot:run
 ```
 
 The API starts on `http://localhost:8080` by default (override with `SERVER_PORT`). Verify it's up:
@@ -167,6 +169,8 @@ curl http://localhost:8080/actuator/health
 ```
 
 Active Spring profile defaults to `local` (override with `SPRING_PROFILES_ACTIVE`).
+
+> If `localhost:5432` or `localhost:8080` is already in use by something else on your machine (another local Postgres install, another app), either stop that process or remap the published port in `docker-compose.yml` — this is a host-machine conflict, not a BizPilot AI issue.
 
 ## Running the Frontend
 
@@ -191,6 +195,8 @@ cd backend
 ./mvnw test           # unit/context tests
 ./mvnw clean verify   # full build + tests, produces target/bizpilot-backend.jar
 ```
+
+Repository/persistence tests use [Testcontainers](https://testcontainers.com/) to start a real, throwaway PostgreSQL automatically — Docker must be running, but no manual database setup is needed; `DB_PASSWORD` does not need to be set for `./mvnw test`.
 
 Frontend testing will be introduced starting in Phase 20/27.
 

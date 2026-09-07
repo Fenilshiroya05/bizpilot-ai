@@ -73,14 +73,21 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local}
       SERVER_PORT: 8080
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-bizpilot}
+      DB_USERNAME: ${DB_USERNAME:-bizpilot}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
     env_file:
       - path: .env
         required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8080:8080"
-    # No dependency on postgres/redis/kafka yet — the Phase 2 backend
-    # foundation does not talk to any of them. This will gain `depends_on`
-    # once database (Phase 3) and messaging integrations are added.
+    # No dependency on redis/kafka yet — the Phase 3 backend foundation
+    # doesn't talk to either. Those gain `depends_on` once wired in.
 
   # ---------------------------------------------------------------------
   # Placeholder — enabled once the frontend foundation (Phase 20) exists.
