@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 3 — the backend foundation (Phase 2) plus the database foundation described below (datasource, JPA/Hibernate, Flyway) exist and are validated end-to-end. Business modules (`identity`, `organization`, `crm`, `sales`, `products`, `documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 4 — authentication & identity foundation (registration, login, JWT access tokens, refresh-token rotation, RBAC-role foundation) exists and is validated end-to-end, on top of the Phase 2 backend foundation and Phase 3 database foundation. Business modules (`organization`, `crm`, `sales`, `products`, `documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -8,7 +8,6 @@
 - Configuration: `application.yml` (defaults, env-var driven) with a `local` profile (`application-local.yml`) active by default, and a `test` profile (`application-test.yml`) used by the test suite. No secrets or environment-specific URLs are hard-coded.
 - Actuator: only the `health` endpoint is exposed, with `show-details: never` — no internal details leak through `/actuator/health`.
 - `common/exception/GlobalExceptionHandler` + `common/response/ApiError` implement the centralized error-response contract defined in [security.md](security.md) (`timestamp`, `status`, `code`, `message`, `path`), with a validation-specific handler and a catch-all handler that logs server-side but never returns stack traces to the client.
-- No security or messaging dependencies are wired in yet — those arrive in Phase 4 (authentication) and later phases respectively.
 
 ## 1b. Database Foundation (Phase 3)
 
@@ -16,6 +15,14 @@
 - `spring.jpa.hibernate.ddl-auto=validate` — Hibernate never creates/alters schema; Flyway (`backend/src/main/resources/db/migration/`) is the sole migration authority, per [database.md](database.md).
 - `common/persistence/BaseEntity` + `common/config/JpaConfig` provide the UUID id / `created_at` / `updated_at` foundation every future entity builds on.
 - Full details, including the deferred tenant-scoped base entity and the Testcontainers-based test setup, are in [database.md](database.md).
+
+## 1c. Authentication & Identity Foundation (Phase 4)
+
+- **`identity` module**: `User` entity (+ `UserRole`, `UserStatus` enums), `UserRepository`, `UserService` (registration business logic), `UserResponse`/`UserMapper` — the domain model for user accounts. Not yet tenant-scoped (no `organization_id` — that's Phase 5).
+- **`security` module**: JWT issuance/validation (`jwt/JwtService`, `jwt/JwtProperties`), the stateless bearer-token filter chain (`SecurityConfig`, `JwtAuthenticationFilter`), refresh-token lifecycle (`RefreshTokenService`, `entity/RefreshToken`), and the auth REST API (`AuthController`, `AuthService`, `dto/*`).
+- Controllers depend on services, services depend on repositories — same layering as every other module (CLAUDE.md §42). `AuthController` → `AuthService` → (`UserService`, `RefreshTokenService`, `JwtService`).
+- `security.CurrentUserProvider` is the one place that reads `SecurityContextHolder` — other modules should depend on it rather than touching Spring Security directly (CLAUDE.md's "keep authentication concerns inside the security/identity layer").
+- Full detail (token model, rotation/reuse-detection, enumeration resistance) is in [security.md](security.md).
 
 ## 1. Style
 

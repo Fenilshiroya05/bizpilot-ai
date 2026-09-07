@@ -78,6 +78,9 @@ services:
       DB_NAME: ${DB_NAME:-bizpilot}
       DB_USERNAME: ${DB_USERNAME:-bizpilot}
       DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      JWT_ACCESS_TOKEN_EXPIRATION_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRATION_MINUTES:-15}
+      JWT_REFRESH_TOKEN_EXPIRATION_DAYS: ${JWT_REFRESH_TOKEN_EXPIRATION_DAYS:-7}
     env_file:
       - path: .env
         required: false

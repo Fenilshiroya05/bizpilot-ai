@@ -7,6 +7,15 @@ spring:
     # profile, so production schema is unaffected.
     locations: classpath:db/migration,classpath:db/testmigration
 
+bizpilot:
+  jwt:
+    # Fixed, non-production secret used only by the test suite (never reused
+    # for local/staging/production, which always require JWT_SECRET from the
+    # environment with no default — see application.yml).
+    secret: test-only-jwt-secret-do-not-use-outside-automated-tests-1234567890
+    access-token-expiration-minutes: 15
+    refresh-token-expiration-days: 7
+
 logging:
   level:
     root: WARN

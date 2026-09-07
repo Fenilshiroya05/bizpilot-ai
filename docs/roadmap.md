@@ -9,7 +9,7 @@ Status legend: `[x]` complete · `[ ]` not started.
 | 1 | Repository structure + documentation + CLAUDE.md | [x] |
 | 2 | Backend foundation | [x] |
 | 3 | Database + Flyway | [x] |
-| 4 | Authentication | [ ] |
+| 4 | Authentication | [x] |
 | 5 | Organizations + multi-tenancy | [ ] |
 | 6 | RBAC | [ ] |
 | 7 | Customers | [ ] |
@@ -69,6 +69,18 @@ No datasource, security, or business-module code was added in Phase 2.
 - `.env.example` and `docs/database.md` updated to match the `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USERNAME`/`DB_PASSWORD` convention.
 
 No authentication, organizations/multi-tenancy schema, RBAC, or other business tables were added in Phase 3 — those belong to Phase 4 onward.
+
+## Phase 4 — Completed Scope
+
+- `identity` module: `User` entity (+ `UserRole`, `UserStatus` enums), `UserRepository`, `UserService` (registration), `UserResponse`/`UserMapper`.
+- `security` module: JWT issuance/validation (`JwtService`, `JwtProperties`), stateless bearer-token `SecurityConfig` + `JwtAuthenticationFilter`, refresh-token rotation/reuse-detection (`RefreshTokenService`, `RefreshToken` entity), `CurrentUserProvider`, REST auth entry point/access-denied handler producing the standard `ApiError` shape.
+- Endpoints: `POST /api/v1/auth/register`, `/login`, `/refresh`, `/logout`, `GET /api/v1/auth/me`.
+- `V2__create_users_and_refresh_tokens.sql` — `users` and `refresh_tokens` tables.
+- RBAC foundation: single `role` column per user (OWNER/ADMIN/MANAGER/SALES/EMPLOYEE), `@EnableMethodSecurity` + `@PreAuthorize` verified working end-to-end. Full granular permission catalog remains Phase 6.
+- 38 backend tests passing (unit + Testcontainers-backed integration), covering registration, login (including enumeration/status-leakage resistance), token validation, refresh rotation + reuse detection, logout, and role-based authorization.
+- Fixed a pre-existing gap surfaced during validation: unmapped routes now return `404` instead of `500` (`GlobalExceptionHandler`).
+
+No organizations/multi-tenancy schema, granular RBAC permissions, or other business tables were added in Phase 4. Email verification and forgot/reset-password (CLAUDE.md §8) are acknowledged but not yet implemented — deferred to a later authentication pass (see `docs/security.md §1a`).
 
 ## Process Per Phase
 

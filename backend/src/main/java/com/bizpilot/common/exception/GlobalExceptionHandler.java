@@ -1,16 +1,23 @@
 package com.bizpilot.common.exception;
 
 import com.bizpilot.common.response.ApiError;
+import com.bizpilot.identity.entity.UserStatus;
+import com.bizpilot.identity.exception.EmailAlreadyExistsException;
+import com.bizpilot.security.exception.AccountNotActiveException;
+import com.bizpilot.security.exception.InvalidCredentialsException;
+import com.bizpilot.security.exception.InvalidRefreshTokenException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -52,6 +59,81 @@ public class GlobalExceptionHandler {
                 request.getRequestURI()
         );
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(EmailAlreadyExistsException.class)
+    public ResponseEntity<ApiError> handleEmailAlreadyExists(EmailAlreadyExistsException ex,
+                                                               HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.CONFLICT.value(),
+                "EMAIL_ALREADY_EXISTS",
+                "An account with this email already exists",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    @ExceptionHandler(InvalidCredentialsException.class)
+    public ResponseEntity<ApiError> handleInvalidCredentials(InvalidCredentialsException ex,
+                                                               HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.UNAUTHORIZED.value(),
+                "INVALID_CREDENTIALS",
+                "Invalid email or password",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(body);
+    }
+
+    @ExceptionHandler(AccountNotActiveException.class)
+    public ResponseEntity<ApiError> handleAccountNotActive(AccountNotActiveException ex,
+                                                             HttpServletRequest request) {
+        String code = ex.getStatus() == UserStatus.LOCKED ? "ACCOUNT_LOCKED" : "ACCOUNT_DISABLED";
+        ApiError body = ApiError.of(
+                HttpStatus.FORBIDDEN.value(),
+                code,
+                "This account cannot currently sign in",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(body);
+    }
+
+    @ExceptionHandler(InvalidRefreshTokenException.class)
+    public ResponseEntity<ApiError> handleInvalidRefreshToken(InvalidRefreshTokenException ex,
+                                                                HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.UNAUTHORIZED.value(),
+                "INVALID_REFRESH_TOKEN",
+                "Invalid refresh token",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(body);
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiError> handleNoResourceFound(NoResourceFoundException ex, HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.NOT_FOUND.value(),
+                "NOT_FOUND",
+                "The requested resource was not found",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiError> handleAccessDenied(AccessDeniedException ex, HttpServletRequest request) {
+        // Covers both URL-level (RestAccessDeniedHandler's filter-chain path) and
+        // method-level (@PreAuthorize -> AuthorizationDeniedException, a subtype)
+        // denials — the latter is thrown *inside* the MVC dispatch, so it reaches
+        // this @RestControllerAdvice before it would ever reach the filter chain.
+        ApiError body = ApiError.of(
+                HttpStatus.FORBIDDEN.value(),
+                "FORBIDDEN",
+                "You do not have permission to access this resource",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(body);
     }
 
     @ExceptionHandler(Exception.class)

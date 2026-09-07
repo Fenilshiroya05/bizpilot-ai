@@ -1,6 +1,6 @@
 # Database
 
-> Status: Phase 3 — the database foundation (datasource, JPA/Hibernate, Flyway) is wired and validated end-to-end. No business tables exist yet; those are introduced incrementally starting Phase 5 (organizations), per `docs/roadmap.md`.
+> Status: Phase 4 — `users` and `refresh_tokens` exist (V2 migration), on top of the Phase 3 database foundation (datasource, JPA/Hibernate, Flyway). Remaining business tables are introduced incrementally starting Phase 5 (organizations), per `docs/roadmap.md`.
 
 ## 0. Implementation Notes (Phase 3)
 
@@ -10,6 +10,13 @@
 - **Base persistence support**: `com.bizpilot.common.persistence.BaseEntity` is a `@MappedSuperclass` providing a JPA-generated `UUID` id plus `created_at`/`updated_at` auditing (via Spring Data JPA auditing, enabled in `common/config/JpaConfig`). Every future entity extends it.
 - **Tenant-scoped base entity**: deferred until Phase 5, when the `organizations` table exists. At that point, a `TenantScopedEntity extends BaseEntity` (adding `organization_id`) will be introduced, and every business entity from Phase 7 onward extends *that* instead of `BaseEntity` directly.
 - **Testing**: `backend/src/test/java/com/bizpilot/TestcontainersConfiguration.java` provides a real, containerized PostgreSQL (`pgvector/pgvector:pg16`, matching `docker-compose.yml`) via Spring Boot's `@ServiceConnection`, used by both application-context tests and a dedicated `BaseEntityPersistenceTest` (which round-trips a test-only fixture entity/table defined only under `src/test/**`, activated only in the `test` profile — never part of production migrations or schema).
+
+## 0a. Implementation Notes (Phase 4)
+
+- `V2__create_users_and_refresh_tokens.sql` adds `users` (email unique globally — not yet per-organization, see below) and `refresh_tokens` (FK to `users`, `ON DELETE CASCADE` — deliberate, since a refresh token has no meaning without its owning user).
+- `users.role` and `users.status` are plain `VARCHAR` columns with a `CHECK` constraint restricting them to the enum values, not yet the full `roles`/`permissions`/`user_roles` junction schema from §3 below — that arrives in Phase 6.
+- `refresh_tokens.token_hash` stores only the SHA-256 hash of the refresh token, never the raw value (see [security.md](security.md)).
+- Both tables extend the `BaseEntity` foundation from Phase 3 (UUID id, `created_at`/`updated_at`).
 
 ## 1. Engine
 
@@ -33,8 +40,9 @@
 | Table | Purpose |
 |---|---|
 | `organizations` | Tenant root. Every business record belongs to one organization. |
-| `users` | User accounts (scoped to an organization, except platform-level admin concerns). |
-| `roles` | RBAC roles (OWNER, ADMIN, MANAGER, SALES, EMPLOYEE). |
+| `users` ✅ (Phase 4) | User accounts. Not yet organization-scoped — see §0a. |
+| `refresh_tokens` ✅ (Phase 4, not in original CLAUDE.md list) | Hashed refresh-token sessions, one row per issued token; supports rotation/revocation. |
+| `roles` | RBAC roles (OWNER, ADMIN, MANAGER, SALES, EMPLOYEE) — Phase 4 stores this as a single column on `users` instead; the full junction-table model here is Phase 6. |
 | `permissions` | Granular permissions (e.g. `CUSTOMER_READ`, `AI_USE`). |
 | `user_roles` | Join table assigning roles to users. |
 | `customers` | CRM customer records. |

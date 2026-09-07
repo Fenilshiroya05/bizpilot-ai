@@ -1,6 +1,6 @@
 # Security
 
-> Status: Phase 1 — describes the target security model and requirements. Implementation begins in Phase 4 (Authentication) and Phase 6 (RBAC); this document is the standing reference every later phase must be checked against.
+> Status: Phase 4 — authentication (registration, login, JWT access tokens, refresh-token rotation with reuse detection, logout) is implemented and validated. Full granular RBAC (permission catalog, `roles`/`permissions`/`user_roles` tables) remains Phase 6; organizations/multi-tenancy remains Phase 5. Email verification and forgot/reset-password are acknowledged CLAUDE.md requirements **not yet implemented** — deferred to a later authentication pass (see §1a).
 
 Priority order for this entire project: **Security > Correctness > Maintainability > Testability > Performance > Convenience.**
 
@@ -14,12 +14,27 @@ Priority order for this entire project: **Security > Correctness > Maintainabili
 - Email verification and forgot/reset-password architected as first-class flows (token-based, time-limited, single-use).
 - Passwords, JWTs, API keys, and other secrets are **never logged**, in any environment.
 
+### 1a. Implementation Notes (Phase 4)
+
+- **Endpoints**: `POST /api/v1/auth/register`, `/login`, `/refresh`, `/logout`, `GET /api/v1/auth/me` (current user).
+- **Password hashing**: BCrypt (`BCryptPasswordEncoder`).
+- **Access tokens**: JWT (HS256), claims limited to `sub` (user id) and `role` — no email/PII in the token payload. Signing secret comes from `JWT_SECRET` (required, ≥32 bytes, no default — fails fast at startup otherwise). Short lifetime via `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` (default 15).
+- **Refresh tokens**: opaque, cryptographically random (256-bit) values — *not* JWTs. Only their SHA-256 hash is ever persisted (`refresh_tokens.token_hash`); the raw value is returned to the client exactly once. Lifetime via `JWT_REFRESH_TOKEN_EXPIRATION_DAYS` (default 7).
+- **Rotation + reuse detection**: every `/refresh` call revokes the presented token and issues a new one. Presenting an already-revoked (previously-rotated) token is treated as a signal of token theft and revokes *every* active refresh token for that user — implemented as its own `REQUIRES_NEW` transaction so the revocation survives regardless of the exception subsequently thrown for the reuse attempt.
+- **Login enumeration resistance**: login never distinguishes "unknown email" from "wrong password" — both return a generic `401 INVALID_CREDENTIALS`. A fixed, precomputed BCrypt hash is compared against when no user is found, so the response time doesn't leak whether an email is registered.
+- **Account-status leakage prevention**: password is verified *before* account status (`ACTIVE`/`DISABLED`/`LOCKED`) is checked, so a disabled/locked account's status is never revealed to someone who doesn't already know the password (both return `401` for a wrong password regardless of status; only a *correct* password against a non-active account returns `403 ACCOUNT_DISABLED`/`ACCOUNT_LOCKED`).
+- **No password/token logging**: verified — no code path logs raw passwords, password hashes, JWTs, or raw refresh tokens.
+- **Default role on registration**: every self-registered user gets `role=EMPLOYEE`, `status=ACTIVE` — least-privilege default. Proper role assignment/invite flows arrive with Organizations (Phase 5) and full RBAC (Phase 6).
+- **Not yet implemented** (acknowledged CLAUDE.md §8 gaps): email verification, forgot-password, reset-password. Account lockout (`LOCKED`) is a valid, checked state but nothing currently transitions a user into it automatically — that arrives with rate-limiting/brute-force protection (CLAUDE.md §26).
+
 ## 2. Authorization (RBAC)
 
 - Roles: `OWNER`, `ADMIN`, `MANAGER`, `SALES`, `EMPLOYEE`.
 - Permissions are granular (e.g. `CUSTOMER_READ`, `CUSTOMER_CREATE`, `AI_USE`, `USER_MANAGE`).
 - **Authorization is enforced in the backend only.** Frontend permission checks exist purely for UX (hiding buttons) and carry zero security weight.
 - Every controller/service method that touches sensitive or tenant-scoped data must have an explicit authorization check.
+- **Phase 4 foundation**: each user has exactly one `role` (single column, not yet the full `roles`/`permissions`/`user_roles` junction schema). The JWT carries the role as a Spring Security authority (`ROLE_<name>`), and `@EnableMethodSecurity` + `@PreAuthorize("hasRole(...)")` is wired and verified working end-to-end. The granular per-permission catalog (`CUSTOMER_READ`, etc.) is Phase 6 scope.
+- **Current user**: `security.CurrentUserProvider` lets any service ask "who is making this request?" from the `SecurityContextHolder` without parsing JWTs directly — future modules should depend on this rather than duplicating token-parsing logic.
 
 ## 3. Multi-Tenancy / Tenant Isolation
 

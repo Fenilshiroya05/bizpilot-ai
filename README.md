@@ -148,7 +148,7 @@ Copy the template and fill in real values locally — **never commit `.env`**:
 cp .env.example .env
 ```
 
-See [.env.example](.env.example) for the full list of supported variables (database, JWT, AI provider/API key, Redis, Kafka, storage, CORS, application URL). As of Phase 3, the backend reads `SERVER_PORT`, `SPRING_PROFILES_ACTIVE`, and the database variables `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD` (all have sensible defaults except `DB_PASSWORD`, which is required — the app fails fast at startup without it). The rest become relevant in later phases.
+See [.env.example](.env.example) for the full list of supported variables (database, JWT, AI provider/API key, Redis, Kafka, storage, CORS, application URL). As of Phase 4, the backend reads `SERVER_PORT`, `SPRING_PROFILES_ACTIVE`, the database variables (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`), and the JWT variables (`JWT_SECRET`, `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES`, `JWT_REFRESH_TOKEN_EXPIRATION_DAYS`). `DB_PASSWORD` and `JWT_SECRET` have no defaults — the app fails fast at startup without them (`JWT_SECRET` must additionally be at least 32 bytes for HS256 signing). The rest become relevant in later phases.
 
 ## Running the Backend
 
@@ -156,9 +156,10 @@ The backend needs a running PostgreSQL to start (Flyway migrations run on startu
 
 ```bash
 export DB_PASSWORD=changeme   # or set it in .env and use `docker compose --env-file .env up -d postgres`
+export JWT_SECRET=$(openssl rand -base64 48)   # or any value >= 32 bytes; set in .env for reuse across restarts
 docker compose up -d postgres
 cd backend
-DB_PASSWORD=$DB_PASSWORD ./mvnw spring-boot:run
+DB_PASSWORD=$DB_PASSWORD JWT_SECRET=$JWT_SECRET ./mvnw spring-boot:run
 ```
 
 The API starts on `http://localhost:8080` by default (override with `SERVER_PORT`). Verify it's up:
@@ -172,6 +173,34 @@ Active Spring profile defaults to `local` (override with `SPRING_PROFILES_ACTIVE
 
 > If `localhost:5432` or `localhost:8080` is already in use by something else on your machine (another local Postgres install, another app), either stop that process or remap the published port in `docker-compose.yml` — this is a host-machine conflict, not a BizPilot AI issue.
 
+### Authentication (Phase 4)
+
+```bash
+# Register
+curl -s -X POST http://localhost:8080/api/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"Passw0rd!","firstName":"You","lastName":"Test"}'
+
+# Login (returns accessToken + refreshToken)
+curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"Passw0rd!"}'
+
+# Current user (replace $TOKEN with the accessToken above)
+curl -s http://localhost:8080/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
+
+# Refresh (rotates the refresh token — the old one becomes invalid)
+curl -s -X POST http://localhost:8080/api/v1/auth/refresh \
+  -H 'Content-Type: application/json' -d "{\"refreshToken\":\"$REFRESH_TOKEN\"}"
+
+# Logout (revokes the refresh token)
+curl -s -X POST http://localhost:8080/api/v1/auth/logout \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "{\"refreshToken\":\"$REFRESH_TOKEN\"}"
+```
+
+New users register with `role=EMPLOYEE`, `status=ACTIVE` by default — every other endpoint besides `/register`, `/login`, `/refresh`, and `/actuator/health` requires a valid `Authorization: Bearer <accessToken>` header. See [docs/security.md](docs/security.md) for the full token/security model.
+
 ## Running the Frontend
 
 Not yet available. Will be documented starting in Phase 20 once the Vite project is scaffolded (`cd frontend && npm install && npm run dev`).
@@ -181,7 +210,7 @@ Not yet available. Will be documented starting in Phase 20 once the Vite project
 `docker-compose.yml` provides local infrastructure (PostgreSQL/PGVector, Redis, Kafka) plus the backend service (built from `backend/Dockerfile`). The frontend service remains a placeholder until Phase 20:
 
 ```bash
-cp .env.example .env   # at minimum set DB_PASSWORD
+cp .env.example .env   # at minimum set DB_PASSWORD and JWT_SECRET
 docker compose up -d --build
 curl http://localhost:8080/actuator/health
 ```
@@ -196,7 +225,7 @@ cd backend
 ./mvnw clean verify   # full build + tests, produces target/bizpilot-backend.jar
 ```
 
-Repository/persistence tests use [Testcontainers](https://testcontainers.com/) to start a real, throwaway PostgreSQL automatically — Docker must be running, but no manual database setup is needed; `DB_PASSWORD` does not need to be set for `./mvnw test`.
+Repository/persistence tests use [Testcontainers](https://testcontainers.com/) to start a real, throwaway PostgreSQL automatically — Docker must be running, but no manual database setup is needed; `DB_PASSWORD` and `JWT_SECRET` do not need to be set for `./mvnw test` (the `test` Spring profile supplies its own fixed, non-production JWT secret).
 
 Frontend testing will be introduced starting in Phase 20/27.
 
