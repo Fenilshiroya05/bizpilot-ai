@@ -1,6 +1,6 @@
 # Database
 
-> Status: Phase 8 — `leads` and `lead_activities` exist (V6 migration). Built on top of `customers`/`customer_activities` (Phase 7, V5), `roles`/`permissions`/`user_roles`/`role_permissions` (Phase 6, V4), `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 9 (products), per `docs/roadmap.md`.
+> Status: Phase 9 — `products` and `product_categories` exist (V7 migration), which also extends the Phase 6 `permissions`/`role_permissions` seed data with `PRODUCT_*` permissions — the first migration since V4 to modify RBAC seed data rather than only add new business tables. Built on top of `leads`/`lead_activities` (Phase 8, V6), `customers`/`customer_activities` (Phase 7, V5), `roles`/`permissions`/`user_roles`/`role_permissions` (Phase 6, V4), `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 10 (quotations), per `docs/roadmap.md`.
 
 ## 0. Implementation Notes (Phase 3)
 
@@ -55,6 +55,19 @@
 - **`lead_activities` backs three CLAUDE.md §11 features with one table**, identical pattern to `customer_activities` (Phase 7): `type` (`CREATED`, `STATUS_CHANGED`, `ASSIGNED`, `ARCHIVED`, `NOTE`) discriminates "Lead activities," "Notes," and "Lead history" — one extra type (`ASSIGNED`) versus Customer's set, since Lead has an assignment feature Customer doesn't. No `organization_id` column of its own — same "child of a tenant-scoped parent" precedent.
 - **Indexes**: `ix_leads_organization_id` (tenant scoping), `ix_leads_organization_id_status` (default listing), `ix_leads_organization_id_archived_at` (default "exclude archived" / explicit "archived only" listing), `ix_leads_assigned_to_user_id` (assignee filtering and the assignee-organization validation join), `ix_leads_follow_up_date` (the follow-up-date filter), `ix_lead_activities_lead_id`/`ix_lead_activities_lead_id_type` (notes-only/activities-only/history list endpoints).
 
+## 0f. Implementation Notes (Phase 9)
+
+- `V7__create_products.sql` adds `products` and `product_categories` — both **explicitly named** in the CLAUDE.md §6 initial-entity list. Unlike V5/V6, this migration is **not purely additive-table**: it also inserts `PRODUCT_READ`/`CREATE`/`UPDATE`/`DELETE` into the pre-existing `permissions` table and corresponding rows into `role_permissions` (established by V4). See [security.md](security.md) §2d for the full reasoning (CLAUDE.md §9 frames its permission list as "Examples:", not closed) and the collision-safety argument (every `INSERT` is scoped to `p.name IN ('PRODUCT_...')`, so it can never re-insert a `(role_id, permission_id)` pair V4 already committed).
+- **`product_categories`**: deliberately minimal — CLAUDE.md gives no field list for categories at all (an implementation decision, see `products.entity.ProductCategory`'s Javadoc): just a display name, mirroring `organization.entity.Organization`'s equally minimal design. No description field was added.
+- **`products`**: fields mirror CLAUDE.md §13 exactly (SKU, name, description, unit, price, tax percentage, status) plus the mandatory `organization_id` FK and an optional `category_id` FK. Only `name`, `sku`, `unit`, `price`, `status` are `NOT NULL`; `description` and `category_id` are nullable.
+- **Category relationship is one-category-per-product, not many-to-many**: `products.category_id` is a plain nullable FK, never a join table — CLAUDE.md doesn't specify cardinality, and a simple optional single-category model is the minimal design that satisfies "Product categories" without inventing a hierarchy or multi-category assignment nothing in this phase calls for. `ProductUpdateRequest.clearCategory` correctly takes precedence over a simultaneously-supplied `categoryId` (caught as a test-coverage gap in security review — the logic was already correct, but untested for this exact interaction; two regression tests were added: `updateGivesClearCategoryPrecedenceOverASimultaneouslySuppliedCategoryId` and `updateWithNeitherCategoryIdNorClearCategoryLeavesAnExistingCategoryUnchanged`).
+- **Category deletion is `ON DELETE SET NULL`, not `RESTRICT` or `CASCADE`**: deleting a category never blocks on, or cascades to, referencing products — it only clears their `category_id`. This is the least-destructive choice for a lightweight metadata entity with no independent business significance of its own once removed. `ProductCategoryService.delete()` performs a genuine hard delete (no status/lifecycle field was added to categories — CLAUDE.md requires "Active/inactive status" only for products, §13).
+- **SKU normalization and uniqueness**: SKU is uppercased in `ProductService.normalizeSku` before every persist/comparison — an implementation decision (CLAUDE.md doesn't define SKU format), chosen for consistency with barcode/scan contexts where case is immaterial. `ux_products_org_sku` is a plain (non-partial) unique index on `(organization_id, sku)` — organization-scoped, not global, so the same SKU may legitimately belong to products of two different organizations. Backed by an application-level pre-check (`existsByOrganizationIdAndSkuIgnoreCase`) plus a `DataIntegrityViolationException` fallback for the race condition, mirroring the pattern established for `customers.email` (Phase 7).
+- **Status has only two values, no archive state**: CLAUDE.md §13 explicitly gives "Active/inactive status" (unlike Customer/Lead, where the status model itself was an implementation decision). Unlike Customer/Lead, there is **no separate archive/lifecycle field** — `ProductStatus.INACTIVE` already represents "intentionally unavailable," and `ProductService.delete()` simply transitions a product to `INACTIVE` (idempotent, fully reversible via a subsequent update), rather than introducing a redundant second lifecycle column. A consequence: unlike archived customers/leads, an `INACTIVE` product is **not excluded from default listing** and **can still be freely updated/reactivated** — documented explicitly since it's a deliberate divergence from the Phase 7/8 archive convention, not an inconsistency.
+- **Price/tax precision**: `price NUMERIC(19,4)`, `tax_percentage NUMERIC(5,2)` — never floating point (docs/database.md §2). Price must be `>= 0` (zero allowed — free products/services are legitimate); tax percentage must be `0–100` inclusive, defaulting to `0` if omitted at creation (a reasonable default rather than forcing every creation call to specify a rate, since tax-exempt products are a legitimate case).
+- **Unit is free text, not an enum**: CLAUDE.md doesn't define whether "Unit" is constrained — free text (e.g. "pcs", "kg", "box") was chosen since businesses use varied, unpredictable units; a hard-coded enum would be too restrictive.
+- **Indexes**: `ix_products_organization_id` (tenant scoping), `ix_products_organization_id_status` (status filtering — no "excluded by default" semantics here, unlike customers/leads, since `INACTIVE` isn't an archive state), `ix_products_category_id` (category filtering and the FK), `ux_products_org_sku` (uniqueness + lookup), `ix_product_categories_organization_id` (tenant scoping for categories). No trigram/full-text index for the free-text `q` search, consistent with Phases 7–8's reasoning.
+
 ## 1. Engine
 
 - **PostgreSQL** is the primary datastore.
@@ -87,8 +100,8 @@
 | `customer_activities` ✅ (Phase 7, not in original CLAUDE.md list) | Backs "activities"/"notes"/"history" (CLAUDE.md §10) in one table — see §0d for why this wasn't in the original entity list. |
 | `leads` ✅ (Phase 8) | Sales leads, with status/source/priority — see §0e. No Lead→Customer relationship (deliberately not implemented — see §0e). |
 | `lead_activities` ✅ (Phase 8) | Backs "activities"/"notes"/"history" (CLAUDE.md §11) in one table — see §0e. |
-| `products` | Product catalog items. |
-| `product_categories` | Product categorization. |
+| `products` ✅ (Phase 9) | Product catalog items — see §0f. |
+| `product_categories` ✅ (Phase 9) | Product categorization, one-per-product (not many-to-many) — see §0f. |
 | `quotations` | Quotations issued to customers. |
 | `quotation_items` | Line items on a quotation. |
 | `invoices` | Invoices issued to customers. |
@@ -122,6 +135,8 @@ roles *──* permissions
 customers 1──* customer_activities
 leads 1──* lead_activities
 -- No leads <-> customers relationship (deliberately not implemented — see §0e)
+
+product_categories 1──* products (optional — a product may have no category)
 
 quotations 1──* quotation_items
 quotation_items *──1 products

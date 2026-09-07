@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 8 — the `sales` module is populated with Leads, adding assignment (a cross-tenant-validated reference to a `User`) as a new pattern beyond what Phase 7 (Customers) required. Remaining business modules (`products`, `documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 9 — the `products` module is populated with Products and Product Categories, the first phase to extend the Phase 6 RBAC permission catalog itself (`PRODUCT_*`, via V7) rather than only consume permissions already seeded by V4. Remaining business modules (`documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -59,6 +59,16 @@
 - **No Lead → Customer relationship** — a deliberate decision, not an oversight; CLAUDE.md never mentions one, and the only prior hint (this doc's own Phase-1-era indicative relationships diagram) was a non-binding placeholder, now removed. See [database.md](database.md) §0e.
 - Full detail (identifying-field decision, priority values, assignment/activity model, archive semantics, validation, tenant-isolation/RBAC test coverage) is in [security.md](security.md) and [database.md](database.md).
 
+## 1h. Products Foundation (Phase 9)
+
+- **`products` module** is populated for the first time: `entity/Product`, `entity/ProductCategory`, `entity/ProductStatus`, `repository/ProductRepository`, `repository/ProductCategoryRepository`, `dto/*`, `mapper/ProductMapper`, `mapper/ProductCategoryMapper`, `service/ProductService`, `service/ProductCategoryService`, `service/ProductSearchCriteria` (an internal filter-bundling record), `controller/ProductController` (`/api/v1/products`), `controller/ProductCategoryController` (`/api/v1/products/categories`), `exception/*`. Same layering and conventions as `crm`/`sales`.
+- **First phase to extend the RBAC permission catalog itself, not just consume it.** CLAUDE.md §9 has no `PRODUCT_*` permission, but frames its permission list as "Examples:" — unlike the closed `LeadStatus`/`LeadSource` enums (§11). `V7__create_products.sql` adds `PRODUCT_READ`/`CREATE`/`UPDATE`/`DELETE` to the pre-existing `permissions` table and maps them to the existing 5 roles, carefully scoped so it can never collide with V4's already-committed `role_permissions` rows. See [security.md](security.md) §2d for the full reasoning.
+- **Categories reuse the same `PRODUCT_*` permissions** — no dedicated category permission was introduced, consistent with the "don't invent unrequested scope" reasoning already applied in Phases 7–8.
+- **`ProductCategoryController` is mounted at a literal path segment (`/api/v1/products/categories`) nested under `ProductController`'s base path** — Spring MVC resolves exact path segments ahead of path-variable segments (`/api/v1/products/{id}`), so there is no routing ambiguity; verified with a live request during manual validation.
+- **No archive-lock, unlike Customer/Lead.** CLAUDE.md §13 names no delete/archive feature for products, only "CRUD" — `ProductStatus.INACTIVE` is a normal, freely-editable business state, and `ProductService` has no `rejectIfInactive`-style guard. This is a deliberate divergence from the Phase 7/8 archive convention, not an inconsistency — see [database.md](database.md) for the full reasoning.
+- **Category is one-per-product, not many-to-many** — a plain nullable `category_id` FK, validated tenant-safe (a category from another organization can never be assigned to a product) exactly the way Lead's assignee reference is validated.
+- Full detail (field decisions, SKU/price/tax rules, category relationship, delete semantics, validation, tenant-isolation/RBAC test coverage) is in [security.md](security.md) and [database.md](database.md).
+
 ## 1. Style
 
 BizPilot AI is built as a **modular monolith** on the backend, not a microservices system. Business capabilities are separated into clearly bounded Java packages (modules) inside a single Spring Boot application. This gives most of the maintainability benefits of modular design (clear boundaries, independent evolution, testability) without the operational overhead of distributed systems, which is not justified at this stage.
@@ -108,7 +118,7 @@ Each module owns its own controller/service/repository/entity/dto/mapper/excepti
 | `organization` | Organizations and multi-tenancy context resolution |
 | `crm` | Customers, customer activities/notes ✅ (Phase 7) |
 | `sales` | Leads ✅ (Phase 8), quotations, invoices, sales pipeline |
-| `products` | Product catalog, categories |
+| `products` | Product catalog, categories ✅ (Phase 9) |
 | `documents` | Document upload, storage abstraction, text extraction, chunking |
 | `ai` | Spring AI integration: chat, embeddings, RAG, tool calling, conversation memory |
 | `analytics` | Dashboards, aggregated reporting |

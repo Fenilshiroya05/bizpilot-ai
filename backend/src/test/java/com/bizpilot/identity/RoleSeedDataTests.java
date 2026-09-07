@@ -17,9 +17,19 @@ import java.util.stream.Collectors;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Verifies the Flyway-seeded RBAC catalog (V4) matches the documented mapping
- * in docs/security.md exactly — role permissions section "Verify each
- * configured role receives the intended permissions."
+ * Verifies the Flyway-seeded RBAC catalog (V4, extended by V7 in Phase 9)
+ * matches the documented mapping in docs/security.md exactly — role
+ * permissions section "Verify each configured role receives the intended
+ * permissions."
+ *
+ * <p>Updated in Phase 9: V7 added {@code PRODUCT_READ}/{@code CREATE}/
+ * {@code UPDATE}/{@code DELETE} to the catalog (CLAUDE.md §9 frames its
+ * permission list as "Examples:", not a closed set — see V7's migration
+ * comment and docs/security.md). This is an expected, necessary update to
+ * a pre-existing Phase 6 regression test, not a change to its purpose:
+ * updating the fixed expected-permission-set literals to match the now
+ * intentionally-larger catalog, the same way Phase 6 itself updated Phase
+ * 4/5 test literals when the JWT claim shape changed.
  *
  * <p>{@code @Transactional} keeps the Hibernate session open for the lazy
  * {@code Role.permissions} collection — safe here because, unlike
@@ -36,7 +46,8 @@ class RoleSeedDataTests {
             "CUSTOMER_READ", "CUSTOMER_CREATE", "CUSTOMER_UPDATE", "CUSTOMER_DELETE",
             "LEAD_READ", "LEAD_CREATE", "LEAD_UPDATE", "LEAD_DELETE",
             "QUOTATION_READ", "QUOTATION_CREATE", "QUOTATION_UPDATE", "QUOTATION_DELETE",
-            "DOCUMENT_READ", "DOCUMENT_UPLOAD", "AI_USE", "USER_MANAGE"
+            "DOCUMENT_READ", "DOCUMENT_UPLOAD", "AI_USE", "USER_MANAGE",
+            "PRODUCT_READ", "PRODUCT_CREATE", "PRODUCT_UPDATE", "PRODUCT_DELETE"
     );
 
     @Autowired
@@ -78,7 +89,8 @@ class RoleSeedDataTests {
                 "CUSTOMER_READ", "CUSTOMER_CREATE", "CUSTOMER_UPDATE", "CUSTOMER_DELETE",
                 "LEAD_READ", "LEAD_CREATE", "LEAD_UPDATE", "LEAD_DELETE",
                 "QUOTATION_READ", "QUOTATION_CREATE", "QUOTATION_UPDATE", "QUOTATION_DELETE",
-                "DOCUMENT_READ", "DOCUMENT_UPLOAD", "AI_USE");
+                "DOCUMENT_READ", "DOCUMENT_UPLOAD", "AI_USE",
+                "PRODUCT_READ", "PRODUCT_CREATE", "PRODUCT_UPDATE", "PRODUCT_DELETE");
     }
 
     @Test
@@ -90,8 +102,10 @@ class RoleSeedDataTests {
                 "CUSTOMER_READ", "CUSTOMER_CREATE", "CUSTOMER_UPDATE",
                 "LEAD_READ", "LEAD_CREATE", "LEAD_UPDATE",
                 "QUOTATION_READ", "QUOTATION_CREATE", "QUOTATION_UPDATE",
-                "DOCUMENT_READ", "DOCUMENT_UPLOAD", "AI_USE");
-        assertThat(permissions).doesNotContain("CUSTOMER_DELETE", "LEAD_DELETE", "QUOTATION_DELETE", "USER_MANAGE");
+                "DOCUMENT_READ", "DOCUMENT_UPLOAD", "AI_USE",
+                "PRODUCT_READ", "PRODUCT_CREATE", "PRODUCT_UPDATE");
+        assertThat(permissions).doesNotContain(
+                "CUSTOMER_DELETE", "LEAD_DELETE", "QUOTATION_DELETE", "PRODUCT_DELETE", "USER_MANAGE");
     }
 
     @Test
@@ -100,7 +114,7 @@ class RoleSeedDataTests {
         Set<String> permissions = employee.getPermissions().stream().map(Permission::getName).collect(Collectors.toSet());
 
         assertThat(permissions).containsExactlyInAnyOrder(
-                "CUSTOMER_READ", "LEAD_READ", "QUOTATION_READ", "DOCUMENT_READ", "AI_USE");
+                "CUSTOMER_READ", "LEAD_READ", "QUOTATION_READ", "DOCUMENT_READ", "AI_USE", "PRODUCT_READ");
     }
 
     @Test

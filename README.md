@@ -252,6 +252,27 @@ curl -s -X DELETE http://localhost:8080/api/v1/leads/$LEAD_ID -H "Authorization:
 
 See [docs/security.md](docs/security.md) and [docs/database.md](docs/database.md) for the lead identifying-fields decision, priority values, assignment/activity model, and the status-vs-archive design decision.
 
+### Products (Phase 9)
+
+```bash
+# Create a product category
+curl -s -X POST http://localhost:8080/api/v1/products/categories \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"name":"Electronics"}'
+
+# Create a product (requires PRODUCT_CREATE — SKU is normalized to uppercase, tax defaults to 0)
+curl -s -X POST http://localhost:8080/api/v1/products \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"sku":"widget-100","name":"Widget","unit":"pcs","price":19.99,"taxPercentage":18,"categoryId":"'"$CATEGORY_ID"'"}'
+
+# List/search/filter/paginate (unlike Customers/Leads, INACTIVE products are not hidden by default)
+curl -s "http://localhost:8080/api/v1/products?unit=pcs&status=ACTIVE&page=0&size=20" -H "Authorization: Bearer $TOKEN"
+
+# Delete (soft — transitions to INACTIVE; freely reversible via PATCH, unlike Customer/Lead archiving)
+curl -s -X DELETE http://localhost:8080/api/v1/products/$PRODUCT_ID -H "Authorization: Bearer $TOKEN"
+```
+
+See [docs/security.md](docs/security.md) and [docs/database.md](docs/database.md) for the SKU/price/tax decisions, the category relationship, and why Products have no archive mechanism.
+
 ## Running the Frontend
 
 Not yet available. Will be documented starting in Phase 20 once the Vite project is scaffolded (`cd frontend && npm install && npm run dev`).

@@ -7,6 +7,11 @@ import com.bizpilot.crm.exception.DuplicateCustomerException;
 import com.bizpilot.crm.exception.InvalidCustomerDataException;
 import com.bizpilot.identity.entity.UserStatus;
 import com.bizpilot.identity.exception.EmailAlreadyExistsException;
+import com.bizpilot.products.exception.DuplicateSkuException;
+import com.bizpilot.products.exception.InvalidProductCategoryException;
+import com.bizpilot.products.exception.InvalidProductDataException;
+import com.bizpilot.products.exception.ProductCategoryNotFoundException;
+import com.bizpilot.products.exception.ProductNotFoundException;
 import com.bizpilot.sales.exception.InvalidAssigneeException;
 import com.bizpilot.sales.exception.InvalidLeadDataException;
 import com.bizpilot.sales.exception.LeadArchivedException;
@@ -221,6 +226,64 @@ public class GlobalExceptionHandler {
         ApiError body = ApiError.of(
                 HttpStatus.BAD_REQUEST.value(),
                 "INVALID_LEAD_DATA",
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(ProductNotFoundException.class)
+    public ResponseEntity<ApiError> handleProductNotFound(ProductNotFoundException ex, HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.NOT_FOUND.value(),
+                "PRODUCT_NOT_FOUND",
+                "Product not found",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+    }
+
+    @ExceptionHandler(ProductCategoryNotFoundException.class)
+    public ResponseEntity<ApiError> handleProductCategoryNotFound(ProductCategoryNotFoundException ex,
+                                                                    HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.NOT_FOUND.value(),
+                "PRODUCT_CATEGORY_NOT_FOUND",
+                "Product category not found",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+    }
+
+    @ExceptionHandler(DuplicateSkuException.class)
+    public ResponseEntity<ApiError> handleDuplicateSku(DuplicateSkuException ex, HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.CONFLICT.value(),
+                "DUPLICATE_SKU",
+                "A product with this SKU already exists in this organization",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    @ExceptionHandler(InvalidProductCategoryException.class)
+    public ResponseEntity<ApiError> handleInvalidProductCategory(InvalidProductCategoryException ex,
+                                                                   HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "INVALID_PRODUCT_CATEGORY",
+                "The specified product category does not exist in this organization",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(InvalidProductDataException.class)
+    public ResponseEntity<ApiError> handleInvalidProductData(InvalidProductDataException ex,
+                                                               HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "INVALID_PRODUCT_DATA",
                 ex.getMessage(),
                 request.getRequestURI()
         );

@@ -1,6 +1,6 @@
 # Security
 
-> Status: Phase 8 — Leads are implemented, the second tenant-scoped, RBAC-gated business resource, adding a new cross-tenant validation surface (assignee-organization checks) beyond what Phase 7 (Customers) required. Email verification and forgot/reset-password are acknowledged CLAUDE.md requirements **not yet implemented** — deferred to a later authentication pass (see §1a).
+> Status: Phase 9 — Products are implemented, the first phase to *extend* the Phase 6 RBAC permission catalog itself (`PRODUCT_READ`/`CREATE`/`UPDATE`/`DELETE`, added by V7) rather than only consume permissions already seeded by V4. Email verification and forgot/reset-password are acknowledged CLAUDE.md requirements **not yet implemented** — deferred to a later authentication pass (see §1a).
 
 Priority order for this entire project: **Security > Correctness > Maintainability > Testability > Performance > Convenience.**
 
@@ -43,10 +43,10 @@ Priority order for this entire project: **Security > Correctness > Maintainabili
 
   | Role | Permissions |
   |---|---|
-  | `OWNER`, `ADMIN` | Full catalog (all 16 permissions). No permission exists yet — e.g. billing, organization deletion — that would meaningfully distinguish OWNER from ADMIN; revisit when one is introduced. |
-  | `MANAGER` | Full CRUD on customers/leads/quotations, `DOCUMENT_READ`/`DOCUMENT_UPLOAD`, `AI_USE`. No `USER_MANAGE`. |
-  | `SALES` | Read/create/update (no delete) on customers/leads/quotations, `DOCUMENT_READ`/`DOCUMENT_UPLOAD`, `AI_USE`. No `USER_MANAGE`. |
-  | `EMPLOYEE` | Read-only on customers/leads/quotations/documents, plus `AI_USE` — matches the least-privilege self-registration default. |
+  | `OWNER`, `ADMIN` | Full catalog (all 16 original permissions, plus all 4 `PRODUCT_*` permissions added by Phase 9's V7 — see §2d). No permission exists yet — e.g. billing, organization deletion — that would meaningfully distinguish OWNER from ADMIN; revisit when one is introduced. |
+  | `MANAGER` | Full CRUD on customers/leads/products/quotations, `DOCUMENT_READ`/`DOCUMENT_UPLOAD`, `AI_USE`. No `USER_MANAGE`. |
+  | `SALES` | Read/create/update (no delete) on customers/leads/products/quotations, `DOCUMENT_READ`/`DOCUMENT_UPLOAD`, `AI_USE`. No `USER_MANAGE`. |
+  | `EMPLOYEE` | Read-only on customers/leads/products/quotations/documents, plus `AI_USE` — matches the least-privilege self-registration default. |
 
   As of Phase 7, `CUSTOMER_READ`/`CREATE`/`UPDATE`/`DELETE` gate real business data for the first time (`crm.controller.CustomerController` — see §2b) — the mapping above is no longer only provable via test-only endpoints.
 - **JWT integration**: the access token's `authorities` claim is the user's fully-resolved Spring Security authority set — both `ROLE_<name>` (role authorities, keeping `hasRole(...)` working unchanged from Phase 4) and raw permission names (e.g. `CUSTOMER_READ`, enabling `hasAuthority(...)`). It's computed once, at login/refresh time, from the *current* database state (`AuthService.resolveAuthorities`) — never carried forward from a previous token. This keeps the established "no database lookup per authenticated request" design: `JwtAuthenticationFilter` builds `GrantedAuthority`s directly from this claim.
@@ -66,6 +66,15 @@ Priority order for this entire project: **Security > Correctness > Maintainabili
 - `sales.controller.LeadController` follows the identical `@PreAuthorize("hasAuthority('LEAD_*')")` pattern as Phase 7's `CustomerController`: `LEAD_READ` for all reads (details, listing/search, notes, activities, history), `LEAD_CREATE` for creation, `LEAD_UPDATE` for field updates, adding a note, *and* the dedicated assignment action, `LEAD_DELETE` for archiving. No new roles or permissions were introduced.
 - **Assignment reuses `LEAD_UPDATE`, not a new permission**: CLAUDE.md defines no dedicated assignment permission, and assigning a lead is a form of updating it — consistent with the same reasoning applied to Phase 7's note-creation permission choice.
 - Verified end-to-end against real seeded roles: `LeadAuthorizationTests` proves EMPLOYEE (read-only) is forbidden from create/update/archive, SALES (CRUD minus delete) is forbidden from archiving, and MANAGER (full CRUD) can perform every operation including assignment.
+
+### 2d. Implementation Notes (Phase 9 — first phase to extend the permission catalog itself)
+
+- **CLAUDE.md §9 has no `PRODUCT_*` permission**, unlike `CUSTOMER_*`/`LEAD_*` (already present when Phases 7/8 consumed them). However, §9 introduces its permission list under the heading *"Examples:"* — unlike the closed `LeadStatus`/`LeadSource` enums (§11), this signals the catalog is illustrative, not exhaustive. `PRODUCT_READ`, `PRODUCT_CREATE`, `PRODUCT_UPDATE`, `PRODUCT_DELETE` were added via a new migration (`V7__create_products.sql`) that inserts into the *existing* `permissions`/`role_permissions` tables (first established by V4) — this is the first RBAC-catalog-extending migration in the project, as opposed to V4 itself (initial seed) or Phases 7/8 (pure consumers).
+- **Collision safety**: V7's `INSERT INTO role_permissions ... SELECT ... CROSS JOIN ...` statements are scoped with `WHERE p.name IN ('PRODUCT_READ', 'PRODUCT_CREATE', ...)` specifically so they can never re-insert a `(role_id, permission_id)` pair V4 already committed — the composite primary key would reject any accidental overlap, and the scoping makes that structurally impossible rather than relying on `ON CONFLICT DO NOTHING`.
+- **Mapping**: OWNER/ADMIN/MANAGER get all 4 new permissions; SALES gets `PRODUCT_READ`/`CREATE`/`UPDATE` (no delete); EMPLOYEE gets `PRODUCT_READ` only — identical philosophy to Customers/Leads.
+- **Categories reuse `PRODUCT_*`, no dedicated category permission**: `products.controller.ProductCategoryController` uses the same 4 permissions as `ProductController` — CLAUDE.md defines no category-specific permission, and inventing one for a single sub-resource would be unrequested scope, consistent with the reasoning already applied to Phase 7/8's note-creation permission choices.
+- **A pre-existing Phase 6 regression test (`identity.RoleSeedDataTests`) required updating**, not just new Phase 9 tests — its hardcoded "full permission catalog" literal necessarily grew from 16 to 20 entries, and each role's expected-permission-set assertion was updated to match. This is an expected consequence of legitimately extending the catalog (the same class of update Phase 6 itself made to Phase 4/5 test literals when the JWT claim shape changed), not scope creep.
+- Verified end-to-end against real seeded roles: `ProductAuthorizationTests` proves EMPLOYEE (read-only) is forbidden from create/update/delete, SALES (CRUD minus delete) is forbidden from deleting, and MANAGER (full CRUD) can perform every operation; the actual `role_permissions` rows were also inspected directly via `psql` during manual validation and matched the intended mapping exactly.
 
 ## 3. Multi-Tenancy / Tenant Isolation
 
@@ -97,6 +106,13 @@ Priority order for this entire project: **Security > Correctness > Maintainabili
 - **New surface: assignee-organization validation.** Lead assignment introduces a cross-tenant risk Phase 7 didn't have — a *reference to another entity* (a `User`), not just a lookup of the resource itself. `sales.service.LeadService.assign()` validates the candidate assignee via `identity.repository.UserRepository.findByIdAndOrganizationId(assigneeId, lead.getOrganization().getId())` (a new method added to `UserRepository` for this purpose) — a user from Organization B can never become assignable to a lead in Organization A, even though both are validly authenticated users of the platform. Invalid/cross-org assignee attempts fail as `400 INVALID_ASSIGNEE` (not 404 — the assignee's *existence* isn't a tenant secret the way another org's lead would be, since user accounts aren't leaked information in the same sense).
 - **Mass-assignment resistance**: `LeadCreateRequest`/`LeadUpdateRequest` have no `organizationId` or `assignedToUserId` field — assignment is only reachable through the dedicated, separately-authorized `/assign` endpoint.
 - Verified by `LeadTenantIsolationTests`: cross-org read/update/archive/activities/notes/history all fail as 404; assigning another organization's lead fails as 404 (the lead itself is invisible); assigning a cross-organization *user* to one's own lead fails as `400 INVALID_ASSIGNEE`; organization-id smuggling via body/query/header all proven ineffective.
+
+### 3d. Implementation Notes (Phase 9 — cross-tenant validation on a category reference)
+
+- **Product/category lookups follow the identical Phase 7/8 pattern**: `findByIdAndOrganizationId` is the only by-id lookup in `ProductService`/`ProductCategoryService`.
+- **Category-reference validation mirrors Lead's assignee-reference validation**: a product's `categoryId` (at create or update time) is validated via `ProductCategoryRepository.findByIdAndOrganizationId(categoryId, organizationId)` before being persisted — a category from Organization B can never be assigned to a product in Organization A. Fails as `400 INVALID_PRODUCT_CATEGORY` (same reasoning as Lead's `INVALID_ASSIGNEE`: the referenced entity's existence isn't itself sensitive the way the primary tenant resource is).
+- **No archive-lock, unlike Customer/Lead**: `ProductStatus.INACTIVE` is a normal, freely-editable business state, not a soft-delete lock — there is no `rejectIfInactive`-style guard anywhere in `ProductService`. This is a deliberate difference documented in `docs/database.md`, not an oversight: CLAUDE.md §13 names no archive/delete-blocking feature for products, only "CRUD."
+- Verified by `ProductTenantIsolationTests`: cross-org read/update/delete for both products and categories all fail as 404; assigning a cross-organization category fails as `400 INVALID_PRODUCT_CATEGORY`; organization-id smuggling via body/query/header all proven ineffective.
 
 ## 4. AI-Specific Security
 
