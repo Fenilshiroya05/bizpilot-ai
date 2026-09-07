@@ -1,7 +1,9 @@
 package com.bizpilot.security;
 
 import com.bizpilot.identity.entity.User;
+import com.bizpilot.identity.entity.UserStatus;
 import com.bizpilot.security.entity.RefreshToken;
+import com.bizpilot.security.exception.AccountNotActiveException;
 import com.bizpilot.security.exception.InvalidRefreshTokenException;
 import com.bizpilot.security.jwt.JwtProperties;
 import com.bizpilot.security.jwt.JwtService;
@@ -59,17 +61,18 @@ class RefreshTokenServiceTest {
     }
 
     @Test
-    void rotateRevokesThePresentedTokenAndIssuesAFreshOne() {
+    void rotateClaimsTheExistingTokenAndIssuesAFreshOne() {
+        lenient().when(user.getStatus()).thenReturn(UserStatus.ACTIVE);
         RefreshToken existing = new RefreshToken(user, "existing-hash", Instant.now().plus(1, ChronoUnit.DAYS));
         when(repository.findByTokenHash(anyString())).thenReturn(Optional.of(existing));
+        when(repository.revokeIfActive(any(), anyString(), any(Instant.class))).thenReturn(1);
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         RefreshTokenService.RotatedToken rotated = refreshTokenService.rotate("presented-raw-token");
 
-        assertThat(existing.isRevoked()).isTrue();
-        assertThat(existing.getReplacedByTokenHash()).isNotNull();
         assertThat(rotated.rawToken()).isNotBlank();
         assertThat(rotated.user()).isEqualTo(user);
+        verify(repository).revokeIfActive(eq(existing.getId()), anyString(), any(Instant.class));
         verify(repository, never()).revokeAllActiveForUser(any(), any());
     }
 
@@ -91,12 +94,27 @@ class RefreshTokenServiceTest {
     }
 
     @Test
-    void reusingAnAlreadyRevokedTokenRevokesEveryActiveSessionForThatUser() {
+    void rotateRejectsATokenBelongingToANonActiveAccount() {
+        when(user.getStatus()).thenReturn(UserStatus.DISABLED);
+        RefreshToken existing = new RefreshToken(user, "existing-hash", Instant.now().plus(1, ChronoUnit.DAYS));
+        when(repository.findByTokenHash(anyString())).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> refreshTokenService.rotate("presented-raw-token"))
+                .isInstanceOf(AccountNotActiveException.class);
+
+        verify(repository, never()).revokeIfActive(any(), anyString(), any());
+    }
+
+    @Test
+    void reusingAnAlreadyRotatedTokenRevokesEveryActiveSessionForThatUser() {
         UUID userId = UUID.randomUUID();
         when(user.getId()).thenReturn(userId);
+        lenient().when(user.getStatus()).thenReturn(UserStatus.ACTIVE);
         RefreshToken alreadyRevoked = new RefreshToken(user, "old-hash", Instant.now().plus(1, ChronoUnit.DAYS));
-        alreadyRevoked.revoke("some-newer-hash");
         when(repository.findByTokenHash(anyString())).thenReturn(Optional.of(alreadyRevoked));
+        // 0 = the atomic claim (UPDATE ... WHERE revoked_at IS NULL) matched no row:
+        // already rotated/revoked, or a concurrent request won the race.
+        when(repository.revokeIfActive(any(), anyString(), any(Instant.class))).thenReturn(0);
 
         assertThatThrownBy(() -> refreshTokenService.rotate("stolen-old-token"))
                 .isInstanceOf(InvalidRefreshTokenException.class);
@@ -105,13 +123,26 @@ class RefreshTokenServiceTest {
     }
 
     @Test
-    void revokeMarksAnActiveTokenAsRevokedWithNoReplacement() {
+    void revokeMarksAnActiveTokenOwnedByTheCallerAsRevokedWithNoReplacement() {
+        UUID userId = UUID.randomUUID();
+        when(user.getId()).thenReturn(userId);
         RefreshToken active = new RefreshToken(user, "active-hash", Instant.now().plus(1, ChronoUnit.DAYS));
         when(repository.findByTokenHash(anyString())).thenReturn(Optional.of(active));
 
-        refreshTokenService.revoke("some-token");
+        refreshTokenService.revoke("some-token", userId);
 
         assertThat(active.isRevoked()).isTrue();
         assertThat(active.getReplacedByTokenHash()).isNull();
+    }
+
+    @Test
+    void revokeDoesNothingIfTheTokenBelongsToADifferentUser() {
+        when(user.getId()).thenReturn(UUID.randomUUID());
+        RefreshToken active = new RefreshToken(user, "active-hash", Instant.now().plus(1, ChronoUnit.DAYS));
+        when(repository.findByTokenHash(anyString())).thenReturn(Optional.of(active));
+
+        refreshTokenService.revoke("some-token", UUID.randomUUID());
+
+        assertThat(active.isRevoked()).isFalse();
     }
 }

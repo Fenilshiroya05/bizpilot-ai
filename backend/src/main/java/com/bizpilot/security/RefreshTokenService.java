@@ -1,7 +1,9 @@
 package com.bizpilot.security;
 
 import com.bizpilot.identity.entity.User;
+import com.bizpilot.identity.entity.UserStatus;
 import com.bizpilot.security.entity.RefreshToken;
+import com.bizpilot.security.exception.AccountNotActiveException;
 import com.bizpilot.security.exception.InvalidRefreshTokenException;
 import com.bizpilot.security.jwt.JwtService;
 import com.bizpilot.security.repository.RefreshTokenRepository;
@@ -60,36 +62,51 @@ public class RefreshTokenService {
         RefreshToken existing = repository.findByTokenHash(hash(presentedRawToken))
                 .orElseThrow(InvalidRefreshTokenException::new);
 
-        if (existing.isRevoked()) {
-            // Reuse of a token that was already rotated/revoked: treat as compromised
-            // and kill every active session for this user. Runs in its own, separately
-            // committed transaction (REQUIRES_NEW) so this security response survives
-            // the rollback that the InvalidRefreshTokenException below triggers for the
-            // *current* transaction — otherwise the revocation itself would be undone.
-            UUID userId = existing.getUser().getId();
-            requiresNewTransactionTemplate.executeWithoutResult(
-                    status -> repository.revokeAllActiveForUser(userId, Instant.now()));
-            throw new InvalidRefreshTokenException();
-        }
         if (existing.isExpired()) {
             throw new InvalidRefreshTokenException();
         }
 
         User user = existing.getUser();
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            // Checked here (not just at login) so a session opened before an account
+            // was disabled/locked can't just keep refreshing itself forever.
+            throw new AccountNotActiveException(user.getStatus());
+        }
+
         String newRawToken = generateRawToken();
         String newHash = hash(newRawToken);
-        existing.revoke(newHash);
+        Instant now = Instant.now();
 
-        Instant expiresAt = Instant.now().plus(jwtService.getRefreshTokenTtl());
+        // Atomic claim (UPDATE ... WHERE revoked_at IS NULL): closes the TOCTOU race
+        // where two concurrent requests presenting the same token could otherwise
+        // both pass an isRevoked() check taken from a stale, separately-read entity.
+        int claimed = repository.revokeIfActive(existing.getId(), newHash, now);
+        if (claimed == 0) {
+            // Lost the race, or genuine reuse of an already-rotated/stolen token:
+            // treat as compromised and kill every active session for this user.
+            // Runs in its own, separately committed transaction (REQUIRES_NEW) so
+            // this security response survives the rollback that the exception
+            // below triggers for the *current* transaction.
+            UUID userId = user.getId();
+            requiresNewTransactionTemplate.executeWithoutResult(
+                    status -> repository.revokeAllActiveForUser(userId, Instant.now()));
+            throw new InvalidRefreshTokenException();
+        }
+
+        Instant expiresAt = now.plus(jwtService.getRefreshTokenTtl());
         repository.save(new RefreshToken(user, newHash, expiresAt));
 
         return new RotatedToken(newRawToken, user);
     }
 
     @Transactional
-    public void revoke(String presentedRawToken) {
+    public void revoke(String presentedRawToken, UUID expectedUserId) {
+        // Silently no-ops (rather than erroring) if the token doesn't exist, is
+        // already revoked, or doesn't belong to the caller — same "don't reveal
+        // more than necessary" posture as the rest of the auth flow.
         repository.findByTokenHash(hash(presentedRawToken))
                 .filter(token -> !token.isRevoked())
+                .filter(token -> token.getUser().getId().equals(expectedUserId))
                 .ifPresent(token -> token.revoke(null));
     }
 

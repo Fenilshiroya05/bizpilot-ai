@@ -75,4 +75,9 @@ public class User extends BaseEntity {
     public UserStatus getStatus() {
         return status;
     }
+
+    /** Changes the account's status (e.g. an admin disabling/re-enabling a user). */
+    public void setStatus(UserStatus status) {
+        this.status = status;
+    }
 }

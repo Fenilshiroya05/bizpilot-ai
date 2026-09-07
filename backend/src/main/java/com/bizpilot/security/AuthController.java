@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.UUID;
+
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthController {
@@ -45,13 +47,17 @@ public class AuthController {
     @PostMapping("/logout")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void logout(@Valid @RequestBody RefreshTokenRequest request) {
-        authService.logout(request);
+        authService.logout(request, currentUserId());
     }
 
     @GetMapping("/me")
     public UserResponse me() {
-        UserPrincipal principal = currentUserProvider.getCurrentUser()
+        return authService.getProfile(currentUserId());
+    }
+
+    private UUID currentUserId() {
+        return currentUserProvider.getCurrentUser()
+                .map(UserPrincipal::userId)
                 .orElseThrow(() -> new IllegalStateException("Authenticated request missing security principal"));
-        return authService.getProfile(principal.userId());
     }
 }

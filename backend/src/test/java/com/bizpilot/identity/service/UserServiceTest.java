@@ -6,6 +6,7 @@ import com.bizpilot.identity.entity.UserStatus;
 import com.bizpilot.identity.exception.EmailAlreadyExistsException;
 import com.bizpilot.identity.repository.UserRepository;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -35,7 +36,7 @@ class UserServiceTest {
     void registrationHashesThePasswordAndNeverStoresItRaw() {
         when(userRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
         when(passwordEncoder.encode("MyPassw0rd")).thenReturn("bcrypt-hashed-value");
-        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         User user = userService().register("New.User@Example.com", "MyPassw0rd", "New", "User");
 
@@ -49,7 +50,7 @@ class UserServiceTest {
         when(userRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
         when(passwordEncoder.encode(anyString())).thenReturn("hash");
         ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
-        when(userRepository.save(captor.capture())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(userRepository.saveAndFlush(captor.capture())).thenAnswer(invocation -> invocation.getArgument(0));
 
         userService().register("New.User@Example.com", "MyPassw0rd", " New ", " User ");
 
@@ -62,7 +63,7 @@ class UserServiceTest {
     void registrationDefaultsToEmployeeRoleAndActiveStatus() {
         when(userRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
         when(passwordEncoder.encode(anyString())).thenReturn("hash");
-        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         User user = userService().register("a@example.com", "MyPassw0rd", "A", "B");
 
@@ -77,6 +78,19 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService().register("taken@example.com", "MyPassw0rd", "A", "B"))
                 .isInstanceOf(EmailAlreadyExistsException.class);
 
-        verify(userRepository, never()).save(any());
+        verify(userRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void rejectsRegistrationAsDuplicateEmailWhenAConcurrentRegistrationWinsTheDatabaseRace() {
+        // existsByEmailIgnoreCase says "free" (race: another request hasn't committed
+        // yet), but the DB unique constraint catches it at flush time regardless.
+        when(userRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
+        when(passwordEncoder.encode(anyString())).thenReturn("hash");
+        when(userRepository.saveAndFlush(any(User.class)))
+                .thenThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"));
+
+        assertThatThrownBy(() -> userService().register("raced@example.com", "MyPassw0rd", "A", "B"))
+                .isInstanceOf(EmailAlreadyExistsException.class);
     }
 }

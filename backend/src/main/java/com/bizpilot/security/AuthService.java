@@ -88,8 +88,8 @@ public class AuthService {
     }
 
     @Transactional
-    public void logout(RefreshTokenRequest request) {
-        refreshTokenService.revoke(request.refreshToken());
+    public void logout(RefreshTokenRequest request, UUID currentUserId) {
+        refreshTokenService.revoke(request.refreshToken(), currentUserId);
     }
 
     @Transactional(readOnly = true)

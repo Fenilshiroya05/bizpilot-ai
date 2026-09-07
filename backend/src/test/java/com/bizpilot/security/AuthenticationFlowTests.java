@@ -205,6 +205,23 @@ class AuthenticationFlowTests {
     }
 
     @Test
+    void refreshingWithAStillValidTokenAfterTheAccountIsDisabledIsRejected() {
+        User user = registerDirect("nadia@example.com", "Passw0rd!", "Nadia", "Rios", UserRole.EMPLOYEE, UserStatus.ACTIVE);
+        AuthResponse loginResponse = restTemplate.postForEntity(
+                url("/api/v1/auth/login"), new LoginRequest("nadia@example.com", "Passw0rd!"), AuthResponse.class).getBody();
+
+        // Simulate an admin disabling the account after the session was already issued.
+        user.setStatus(UserStatus.DISABLED);
+        userRepository.saveAndFlush(user);
+
+        ResponseEntity<ApiError> response = restTemplate.postForEntity(
+                url("/api/v1/auth/refresh"), new RefreshTokenRequest(loginResponse.refreshToken()), ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(response.getBody().code()).isEqualTo("ACCOUNT_DISABLED");
+    }
+
+    @Test
     void reusingARotatedRefreshTokenIsRejectedAndRevokesTheWholeSession() {
         registerDirect("judy@example.com", "Passw0rd!", "Judy", "Diaz", UserRole.EMPLOYEE, UserStatus.ACTIVE);
         AuthResponse loginResponse = restTemplate.postForEntity(

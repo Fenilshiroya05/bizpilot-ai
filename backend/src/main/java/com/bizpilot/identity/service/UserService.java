@@ -5,6 +5,7 @@ import com.bizpilot.identity.entity.UserRole;
 import com.bizpilot.identity.entity.UserStatus;
 import com.bizpilot.identity.exception.EmailAlreadyExistsException;
 import com.bizpilot.identity.repository.UserRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +42,15 @@ public class UserService {
                 UserRole.EMPLOYEE,
                 UserStatus.ACTIVE
         );
-        return userRepository.save(user);
+        try {
+            // saveAndFlush (not save): forces the INSERT — and therefore the unique
+            // constraint check — to happen synchronously here, so a concurrent
+            // registration for the same email that won the race between the
+            // existsByEmailIgnoreCase check above and this insert is still caught
+            // and reported as 409, not a generic 500.
+            return userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException e) {
+            throw new EmailAlreadyExistsException(normalizedEmail);
+        }
     }
 }
