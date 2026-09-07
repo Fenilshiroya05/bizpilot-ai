@@ -204,6 +204,29 @@ curl -s -X POST http://localhost:8080/api/v1/auth/logout \
 
 New users register with `roles=["EMPLOYEE"]`, `status=ACTIVE`, and a brand-new organization (named after `organizationName`) by default — every other endpoint besides `/register`, `/login`, `/refresh`, and `/actuator/health` requires a valid `Authorization: Bearer <accessToken>` header. The current organization is always derived from that token, never from client input. See [docs/security.md](docs/security.md) for the full token/security/tenancy model.
 
+### Customers / CRM (Phase 7)
+
+```bash
+# Create a customer (requires CUSTOMER_CREATE — the default EMPLOYEE role is read-only;
+# see docs/security.md for the seeded role → permission mapping)
+curl -s -X POST http://localhost:8080/api/v1/customers \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Jane Doe","company":"Acme Ltd","email":"jane@example.com"}'
+
+# List/search/filter/paginate (status defaults to excluding ARCHIVED)
+curl -s "http://localhost:8080/api/v1/customers?q=jane&page=0&size=20" -H "Authorization: Bearer $TOKEN"
+
+# Add a note, then view notes/activities/history (replace $CUSTOMER_ID)
+curl -s -X POST http://localhost:8080/api/v1/customers/$CUSTOMER_ID/notes \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"content":"Called, follow up next week"}'
+curl -s http://localhost:8080/api/v1/customers/$CUSTOMER_ID/history -H "Authorization: Bearer $TOKEN"
+
+# Archive (soft-delete; requires CUSTOMER_DELETE)
+curl -s -X DELETE http://localhost:8080/api/v1/customers/$CUSTOMER_ID -H "Authorization: Bearer $TOKEN"
+```
+
+See [docs/security.md](docs/security.md) and [docs/database.md](docs/database.md) for the customer status model, archive/soft-delete design, and the activities/notes/history design decision.
+
 ## Running the Frontend
 
 Not yet available. Will be documented starting in Phase 20 once the Vite project is scaffolded (`cd frontend && npm install && npm run dev`).

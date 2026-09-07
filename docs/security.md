@@ -1,6 +1,6 @@
 # Security
 
-> Status: Phase 6 — full RBAC (roles, permissions, `user_roles`/`role_permissions`) is implemented and validated, on top of Phase 5 (organizations/tenant isolation) and Phase 4 (authentication). Email verification and forgot/reset-password are acknowledged CLAUDE.md requirements **not yet implemented** — deferred to a later authentication pass (see §1a).
+> Status: Phase 7 — the first real tenant-scoped, RBAC-gated business resource (Customers) is implemented, exercising the Phase 5 tenant-isolation and Phase 6 RBAC mechanisms against real data for the first time. Email verification and forgot/reset-password are acknowledged CLAUDE.md requirements **not yet implemented** — deferred to a later authentication pass (see §1a).
 
 Priority order for this entire project: **Security > Correctness > Maintainability > Testability > Performance > Convenience.**
 
@@ -48,12 +48,18 @@ Priority order for this entire project: **Security > Correctness > Maintainabili
   | `SALES` | Read/create/update (no delete) on customers/leads/quotations, `DOCUMENT_READ`/`DOCUMENT_UPLOAD`, `AI_USE`. No `USER_MANAGE`. |
   | `EMPLOYEE` | Read-only on customers/leads/quotations/documents, plus `AI_USE` — matches the least-privilege self-registration default. |
 
-  Since the underlying resources (customers, leads, quotations, documents) don't exist until Phase 7+, this mapping is enforced in the seed data and provable via `@PreAuthorize("hasAuthority(...))")`, but has nothing real to gate yet except the two test-only endpoints used to verify the mechanism.
+  As of Phase 7, `CUSTOMER_READ`/`CREATE`/`UPDATE`/`DELETE` gate real business data for the first time (`crm.controller.CustomerController` — see §2b) — the mapping above is no longer only provable via test-only endpoints.
 - **JWT integration**: the access token's `authorities` claim is the user's fully-resolved Spring Security authority set — both `ROLE_<name>` (role authorities, keeping `hasRole(...)` working unchanged from Phase 4) and raw permission names (e.g. `CUSTOMER_READ`, enabling `hasAuthority(...)`). It's computed once, at login/refresh time, from the *current* database state (`AuthService.resolveAuthorities`) — never carried forward from a previous token. This keeps the established "no database lookup per authenticated request" design: `JwtAuthenticationFilter` builds `GrantedAuthority`s directly from this claim.
 - **No staleness beyond one token lifetime**: because authorities are re-resolved on every refresh (not just login), a role grant or revocation takes effect on the *next* refresh call, not just the next full login — the same pattern already used for account-status changes (`AccountNotActiveException` check in `RefreshTokenService.rotate`). The maximum staleness window for an already-issued, not-yet-refreshed access token is bounded by `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` (15 minutes by default).
 - **No caching layer**: per the project's explicit "don't introduce Redis just for RBAC" guidance — authorities are computed from the relational model on each login/refresh (a handful of small in-memory collection operations, no extra query beyond what JPA already needs to load the association), which is simple and fast enough without a cache.
 - **No role/permission-assignment API**: there is no endpoint anywhere that lets a client assign, modify, or query someone else's roles/permissions. Role changes in this phase are only possible via direct database/repository action (what an eventual admin-only user-management feature, `USER_MANAGE`-gated, would do in a later phase) — there is currently no public attack surface for privilege escalation to target.
 - **Method security**: `@EnableMethodSecurity` (already enabled since Phase 4) + `@PreAuthorize("hasRole(...)")` / `@PreAuthorize("hasAuthority(...)")`, verified end-to-end against two test-only endpoints (`security.RoleProtectedTestController`, never shipped to production — same pattern as Phase 3's `SampleEntity` fixture).
+
+### 2b. Implementation Notes (Phase 7 — first real permission-gated resource)
+
+- Every `crm.controller.CustomerController` endpoint carries an explicit `@PreAuthorize("hasAuthority('CUSTOMER_*')")`: `CUSTOMER_READ` for all reads (details, listing/search, notes, activities, history), `CUSTOMER_CREATE` for creation, `CUSTOMER_UPDATE` for field updates and adding a note, `CUSTOMER_DELETE` for archiving. No new roles or permissions were introduced — this phase only consumes the Phase 6 catalog.
+- **Why "add a note" requires `CUSTOMER_UPDATE`, not `CUSTOMER_READ`**: CLAUDE.md doesn't define a dedicated note-creation permission, and adding one for a single sub-feature would be inventing scope the project spec doesn't ask for. `CUSTOMER_UPDATE` is the closest existing permission for "adds data to a customer record."
+- Verified end-to-end against real seeded roles (not test-only fixtures): `CustomerAuthorizationTests` proves EMPLOYEE (read-only) is forbidden from create/update/delete, SALES (CRUD minus delete) is forbidden from archiving, and MANAGER (full CRUD) can perform every operation.
 
 ## 3. Multi-Tenancy / Tenant Isolation
 
@@ -71,6 +77,13 @@ Priority order for this entire project: **Security > Correctness > Maintainabili
 - **No "user without an organization" case**: the NOT NULL constraint plus mandatory provisioning at registration mean this state cannot occur in this design — not tested, since there's nothing to trigger it (see `docs/database.md §0b` for the reasoning).
 - **Malformed-claim safety**: `JwtAuthenticationFilter.authenticate` wraps claim extraction (`sub`/`orgId`/`authorities`) in a try/catch — a validly-signed token with a missing or malformed claim (e.g. one minted before a claim existed) is treated exactly like any other invalid token (left unauthenticated → `401`), never an uncaught exception that would bypass the standard `ApiError` envelope. Covered by an explicit regression test (`AuthenticationFlowTests.meWithValidSignatureButMissingOrganizationClaimReturns401NotAServerError`).
 - **RBAC + tenant isolation together (Phase 6)**: these are independent, both-required checks — `@PreAuthorize` decides *whether* an action is permitted at all; `TenantContext` decides *whose* data it applies to. Neither can substitute for the other: holding a permission (e.g. `CUSTOMER_READ`) never provides a way to read another organization's data, since the resolved organization id still comes only from the JWT, never from anything permission-related. Verified explicitly by `RbacAuthorizationTests.havingThePermissionNeverGrantsAccessToAnotherOrganizationsData`.
+
+### 3b. Implementation Notes (Phase 7 — first real tenant-scoped resource)
+
+- **Tenant-safe lookup pattern**: `crm.repository.CustomerRepository.findByIdAndOrganizationId(id, organizationId)` is the *only* by-id lookup used anywhere in `CustomerService` — there is no code path that calls a plain `findById`. A customer belonging to another organization and a truly nonexistent id are deliberately indistinguishable to the client: both produce `404 CUSTOMER_NOT_FOUND`, never a `403`, so a cross-tenant probe can't learn whether a given id exists in another tenant.
+- **Child records inherit tenant safety from their parent, not from their own column**: `customer_activities` (backing "activities"/"notes"/"history") has no `organization_id` column of its own — the same precedent as `security.entity.RefreshToken` (a child of `User`). Every read/write against it goes through `CustomerService`'s org-scoped `Customer` lookup *first*; only once that succeeds is `customer_id` used to query activities, so cross-tenant access is structurally impossible without ever duplicating `organization_id` on the child table.
+- **Mass-assignment resistance**: `CustomerCreateRequest`/`CustomerUpdateRequest` have no `organizationId` field at all — there is nothing for a client to smuggle at the DTO level. The organization is always resolved via `organization.service.OrganizationService.getCurrentOrganization()` (itself backed by `TenantContext`), never accepted from the request.
+- Verified by `CustomerTenantIsolationTests`: cross-org read/update/archive/activities/notes/history all fail as 404; an attempt to smuggle another organization's id via an extra JSON body field, a query parameter, and an `X-Organization-Id` header are each proven ineffective.
 
 ## 4. AI-Specific Security
 
@@ -113,6 +126,8 @@ Protections required across the application:
 Tracked for important operations: user, organization, action, entity type, entity ID, timestamp, IP where appropriate, and result. Examples: `LOGIN`, `CREATE_CUSTOMER`, `UPDATE_CUSTOMER`, `DELETE_CUSTOMER`, `CREATE_QUOTATION`, `AI_TOOL_EXECUTION`, `DOCUMENT_UPLOAD`.
 
 Audit logs never contain passwords, JWTs, API keys, other secrets, or sensitive document contents.
+
+**Not yet implemented (Phase 7 note)**: this remains the generic, project-wide `audit_logs` capability (CLAUDE.md §24) — no phase in the roadmap has built it yet, and Phase 7 deliberately does not either. `crm.entity.CustomerActivity` (see `docs/database.md`) is a narrower, customer-scoped timeline for the CLAUDE.md §10 "activities/notes/history" *features*, not a substitute for this system-wide audit log — it records only customer lifecycle events (created/status changed/archived/note added), not every sensitive operation across the application (e.g. it does not log `LOGIN` or `AI_TOOL_EXECUTION`).
 
 ## 8. Secrets & Configuration
 

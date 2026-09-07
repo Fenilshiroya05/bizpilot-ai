@@ -1,6 +1,6 @@
 # Database
 
-> Status: Phase 6 — `roles`, `permissions`, `user_roles`, `role_permissions` exist (V4 migration), replacing the Phase 4 `users.role` column as the single authoritative source of role assignment. Built on top of `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 7 (customers), per `docs/roadmap.md`.
+> Status: Phase 7 — `customers` and `customer_activities` exist (V5 migration), the first real tenant-scoped, RBAC-gated business tables. Built on top of `roles`/`permissions`/`user_roles`/`role_permissions` (Phase 6, V4), `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 8 (leads), per `docs/roadmap.md`.
 
 ## 0. Implementation Notes (Phase 3)
 
@@ -32,6 +32,18 @@
 - **FK cascade choices** (deliberate per relationship, not a blanket rule — see §2 below): `user_roles.user_id` cascades on user deletion (an assignment is meaningless without the user); `user_roles.role_id` is `ON DELETE RESTRICT` (protects against deleting a role that's still assigned to someone); `role_permissions.role_id` cascades on role deletion; `role_permissions.permission_id` is `ON DELETE RESTRICT`.
 - **No DB-level "every user has ≥1 role" constraint**: this is an application-level invariant only (registration always assigns `EMPLOYEE`; no code path in this phase removes a user's last role) — a true multi-row cardinality constraint would need a trigger, which was judged unnecessary complexity for this phase.
 
+## 0d. Implementation Notes (Phase 7)
+
+- `V5__create_customers.sql` adds `customers` and `customer_activities` — the first tables for a real business resource (CLAUDE.md §10), and the first to exercise the Phase 5 tenant-isolation and Phase 6 RBAC mechanisms against actual data.
+- **`customers`**: fields mirror CLAUDE.md §10 exactly (name, company, email, phone, address, gstin, status, notes) plus the mandatory `organization_id` FK. Only `name` is `NOT NULL`; every other business field is nullable, per "do not unnecessarily collect personal information."
+- **Clearing an optional field via PATCH**: `CustomerUpdateRequest` uses `null` = "leave unchanged" and `""` = "clear this field" (`CustomerService` normalizes `""` to `null` before persisting). The GSTIN `@Pattern` regex is deliberately `^$|<gstin-pattern>` (accepting empty string as well as a valid GSTIN) so a previously-set GSTIN can actually be cleared — a plain `@Pattern` without the `^$|` alternative only special-cases `null`, not `""`, which would otherwise make a set GSTIN permanently unclearable through the API (caught in security review, fixed before completion).
+- **Status model** (CLAUDE.md is silent on values — an implementation decision, see [security.md](security.md) and `crm.entity.CustomerStatus`'s Javadoc): `ACTIVE`, `INACTIVE`, `ARCHIVED`. `ARCHIVED` is the soft-delete state, reachable only through the dedicated archive operation (`DELETE /api/v1/customers/{id}`), never through the general update endpoint — enforced in `CustomerService`, not just by convention.
+- **Email uniqueness is per-organization, not global**: `ux_customers_org_email` is a *partial* unique index (`WHERE email IS NOT NULL`) on `(organization_id, email)` — the same email may legitimately belong to customers of two different organizations, and email itself is optional, so any number of customers may have a `NULL` email. Backed by an application-level pre-check (`existsByOrganizationIdAndEmailIgnoreCase`) plus a `DataIntegrityViolationException` fallback for the race condition, mirroring the pattern `identity.service.UserService` already uses for account-email uniqueness.
+- **`customer_activities` backs three CLAUDE.md §10 features with one table**: "Customer activities," "Customer notes," and "Customer history" are all rows in this single table, discriminated by a `type` column (`CREATED`, `STATUS_CHANGED`, `ARCHIVED`, `NOTE`) rather than three separate tables — see `crm.entity.CustomerActivityType`'s Javadoc for the reasoning. This is deliberately **not** the general-purpose, project-wide Audit Logging capability (CLAUDE.md §24, still unbuilt — see [security.md](security.md) §7): it only ever records customer lifecycle events, nothing else in the system.
+- **`customer_activities` has no `organization_id` column of its own** — same precedent as `refresh_tokens` (a child of a tenant-scoped parent, `users`, without its own tenant column). Every access path resolves the parent `Customer` via the org-scoped `findByIdAndOrganizationId` lookup first; only then is `customer_id` used to query this table, so cross-tenant access is structurally impossible without duplicating `organization_id` here. Entries are immutable (insert-only) by convention — nothing in `CustomerService` ever updates or deletes one.
+- **Attribution without a JPA relationship**: `customer_activities.created_by_user_id` is a plain `UUID` column with a DB-level FK to `users`, not a `@ManyToOne` JPA relationship — it's an attribution stamp only; nothing in this phase needs to load the full `User` entity just to render an activity entry, so the extra relationship (and its lazy-loading surface) was left out.
+- **Indexes**: `ix_customers_organization_id` (tenant scoping, mandatory per §2), `ix_customers_organization_id_status` (supports the default listing query, which always filters by organization + status), `ix_customer_activities_customer_id` and `ix_customer_activities_customer_id_type` (support the notes-only/activities-only/history list endpoints). No trigram/full-text index was added for the free-text `q` search — a plain `LIKE`-based, database-paginated query is sufficient for this phase's scope; revisit if search performance becomes a real concern at larger data volumes.
+
 ## 1. Engine
 
 - **PostgreSQL** is the primary datastore.
@@ -60,7 +72,8 @@
 | `permissions` ✅ (Phase 6) | Granular permissions (e.g. `CUSTOMER_READ`, `AI_USE`) — fixed catalog of 16, per CLAUDE.md §9. |
 | `user_roles` ✅ (Phase 6) | Join table assigning roles to users (composite PK, no `BaseEntity`). |
 | `role_permissions` ✅ (Phase 6, not in original CLAUDE.md list) | Join table assigning permissions to roles (composite PK, no `BaseEntity`) — see §0c for why this wasn't in the original entity list. |
-| `customers` | CRM customer records. |
+| `customers` ✅ (Phase 7) | CRM customer records — see §0d. |
+| `customer_activities` ✅ (Phase 7, not in original CLAUDE.md list) | Backs "activities"/"notes"/"history" (CLAUDE.md §10) in one table — see §0d for why this wasn't in the original entity list. |
 | `leads` | Sales leads, with status/source/priority. |
 | `lead_activities` | Activity/history log per lead. |
 | `products` | Product catalog items. |
@@ -95,6 +108,7 @@ organizations 1──* documents
 users *──* roles (via user_roles)
 roles *──* permissions
 
+customers 1──* customer_activities
 customers 1──* leads (optional association)
 leads 1──* lead_activities
 

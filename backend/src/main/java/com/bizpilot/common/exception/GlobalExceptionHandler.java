@@ -1,6 +1,10 @@
 package com.bizpilot.common.exception;
 
 import com.bizpilot.common.response.ApiError;
+import com.bizpilot.crm.exception.CustomerArchivedException;
+import com.bizpilot.crm.exception.CustomerNotFoundException;
+import com.bizpilot.crm.exception.DuplicateCustomerException;
+import com.bizpilot.crm.exception.InvalidCustomerDataException;
 import com.bizpilot.identity.entity.UserStatus;
 import com.bizpilot.identity.exception.EmailAlreadyExistsException;
 import com.bizpilot.security.exception.AccountNotActiveException;
@@ -12,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -108,6 +113,70 @@ public class GlobalExceptionHandler {
                 request.getRequestURI()
         );
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(body);
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiError> handleMalformedRequestBody(HttpMessageNotReadableException ex,
+                                                                HttpServletRequest request) {
+        // Covers malformed JSON and invalid enum values (e.g. an unrecognized
+        // customer status string) deserializing a request body — without this,
+        // Jackson's deserialization failure would otherwise fall through to the
+        // generic 500 handler below instead of a client-caused 400.
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "VALIDATION_ERROR",
+                "Invalid request",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(CustomerNotFoundException.class)
+    public ResponseEntity<ApiError> handleCustomerNotFound(CustomerNotFoundException ex,
+                                                             HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.NOT_FOUND.value(),
+                "CUSTOMER_NOT_FOUND",
+                "Customer not found",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+    }
+
+    @ExceptionHandler(DuplicateCustomerException.class)
+    public ResponseEntity<ApiError> handleDuplicateCustomer(DuplicateCustomerException ex,
+                                                              HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.CONFLICT.value(),
+                "DUPLICATE_CUSTOMER",
+                "A customer with this email already exists in this organization",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    @ExceptionHandler(CustomerArchivedException.class)
+    public ResponseEntity<ApiError> handleCustomerArchived(CustomerArchivedException ex,
+                                                             HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.CONFLICT.value(),
+                "CUSTOMER_ARCHIVED",
+                "This customer is archived and cannot be modified",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    @ExceptionHandler(InvalidCustomerDataException.class)
+    public ResponseEntity<ApiError> handleInvalidCustomerData(InvalidCustomerDataException ex,
+                                                                HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "INVALID_CUSTOMER_DATA",
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

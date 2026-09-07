@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 6 — junction-table RBAC (`roles`, `permissions`, `user_roles`, `role_permissions`) exists and is enforced via Spring Security method security, on top of Phase 5 (organizations & tenant isolation), Phase 4 (authentication & identity), Phase 3 (database foundation), and Phase 2 (backend foundation). Business modules (`crm`, `sales`, `products`, `documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 7 — the `crm` module is populated with the first real business resource (Customers), exercising Phase 5 tenant isolation and Phase 6 RBAC against actual data for the first time. Remaining business modules (`sales`, `products`, `documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -41,6 +41,14 @@
 - **RBAC and tenant resolution are fully independent JWT claims** (`authorities` vs `orgId`) — a permission never provides an alternate path to another organization's data; both checks are required together, never substitutable for each other. Verified in `RbacAuthorizationTests.havingThePermissionNeverGrantsAccessToAnotherOrganizationsData`.
 - No role/permission-assignment REST API was added this phase — CLAUDE.md doesn't assign such an endpoint to Phase 6, and adding one would need its own authorization/audit design. Role changes in this phase happen only via direct DB manipulation (as done in tests) or the Flyway seed data.
 - Full detail (role/permission catalog, the role→permission mapping decision, privilege-escalation analysis) is in [security.md](security.md); schema detail is in [database.md](database.md).
+
+## 1f. CRM Foundation — Customers (Phase 7)
+
+- **`crm` module** is populated for the first time: `entity/Customer`, `entity/CustomerStatus`, `entity/CustomerActivity`, `entity/CustomerActivityType`, `repository/CustomerRepository`, `repository/CustomerActivityRepository`, `dto/*`, `mapper/CustomerMapper`, `mapper/CustomerActivityMapper`, `service/CustomerService`, `controller/CustomerController`, `exception/*`. Same layering as every other module: `Controller → Service → Repository → Entity`, DTOs/mappers at the boundary.
+- **First real consumer of tenant isolation and RBAC together**: every `CustomerService` method resolves the organization via `organization.TenantContext`/`organization.service.OrganizationService` (never from client input) and every by-id lookup uses the tenant-safe `CustomerRepository.findByIdAndOrganizationId`, never a plain `findById`. Every `CustomerController` endpoint carries an explicit `@PreAuthorize("hasAuthority('CUSTOMER_*')")` using the Phase 6 permission catalog — no new roles/permissions were introduced.
+- **One table backs three CLAUDE.md §10 features**: `CustomerActivity` (type `CREATED`/`STATUS_CHANGED`/`ARCHIVED`/`NOTE`) backs "activities," "notes," and "history" without a separate table per feature or any project-wide audit/event-sourcing framework — see [database.md](database.md) for the full reasoning, and [security.md](security.md) §7 for why this is explicitly *not* the still-unbuilt, general-purpose Audit Logging capability (CLAUDE.md §24).
+- **Cross-module reuse, not duplication**: `CustomerService` obtains the current `Organization` entity via `organization.service.OrganizationService.getCurrentOrganization()` (going through that module's service, per CLAUDE.md §42), rather than reaching into `OrganizationRepository` directly.
+- Full detail (status model, archive/soft-delete decision, uniqueness, validation, tenant-isolation/RBAC test coverage) is in [security.md](security.md) and [database.md](database.md).
 
 ## 1. Style
 
@@ -89,7 +97,7 @@ Each module owns its own controller/service/repository/entity/dto/mapper/excepti
 | `security` | Authentication, JWT issuance/validation, security filters, password handling |
 | `identity` | Users, roles, permissions, user-role assignment ✅ (Phase 6) |
 | `organization` | Organizations and multi-tenancy context resolution |
-| `crm` | Customers, customer activities/notes |
+| `crm` | Customers, customer activities/notes ✅ (Phase 7) |
 | `sales` | Leads, quotations, invoices, sales pipeline |
 | `products` | Product catalog, categories |
 | `documents` | Document upload, storage abstraction, text extraction, chunking |

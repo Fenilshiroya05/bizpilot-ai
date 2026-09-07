@@ -12,7 +12,7 @@ Status legend: `[x]` complete · `[ ]` not started.
 | 4 | Authentication | [x] |
 | 5 | Organizations + multi-tenancy | [x] |
 | 6 | RBAC | [x] |
-| 7 | Customers | [ ] |
+| 7 | Customers | [x] |
 | 8 | Leads | [ ] |
 | 9 | Products | [ ] |
 | 10 | Quotations | [ ] |
@@ -106,6 +106,19 @@ No RBAC/roles/permissions, business entities (customers/leads/products/etc.), or
 - Security review (background subagent, scoped to the full Phase 6 diff): no CRITICAL or HIGH findings; merge-ready. One MEDIUM noted (potential N+1 when resolving permissions for a user with more than one role — not reachable today, since no code path assigns multiple roles; worth revisiting once a real role-assignment feature exists) and two LOW code-smell notes (a repository method taking a raw `String` instead of a constrained type; an unchecked cast in JWT claim extraction, already safely handled by the existing malformed-claim catch path) — both deferred as non-blocking.
 
 No business entities (customers/leads/products/etc.), role/permission-assignment API, or frontend work were added in Phase 6 — those belong to Phase 7 onward.
+
+## Phase 7 — Completed Scope
+
+- `crm` module populated for the first time: `entity/Customer`, `entity/CustomerStatus` (ACTIVE/INACTIVE/ARCHIVED — CLAUDE.md doesn't define values, a documented implementation decision), `entity/CustomerActivity`, `entity/CustomerActivityType` (CREATED/STATUS_CHANGED/ARCHIVED/NOTE), repositories, DTOs, mappers, `CustomerService`, `CustomerController`, and dedicated exceptions (`CustomerNotFoundException`, `DuplicateCustomerException`, `CustomerArchivedException`, `InvalidCustomerDataException`).
+- `V5__create_customers.sql` — `customers` (fields exactly per CLAUDE.md §10: name, company, email, phone, address, gstin, status, notes) and `customer_activities` (one table backing "activities"/"notes"/"history" via a `type` discriminator, not three separate tables or a generic audit system). Organization-scoped partial-unique email index; no `organization_id` on `customer_activities` — it inherits tenant safety from its parent `Customer` (same precedent as `refresh_tokens`).
+- Endpoints under `/api/v1/customers`: create, get, update (PATCH, partial), archive (`DELETE`, soft-delete only), list/search/filter/paginate, add note, list notes, list activities, list history — 9 endpoints, matching the minimum set required. Every endpoint requires the matching Phase 6 `CUSTOMER_*` permission; no new roles/permissions were introduced.
+- Archive is a soft-delete (`status = ARCHIVED`) reachable only through the dedicated archive endpoint — never through the general update endpoint (explicitly rejected with `400 INVALID_CUSTOMER_DATA`); archived customers reject further modification (`409 CUSTOMER_ARCHIVED`) and are excluded from default listing unless explicitly filtered for.
+- `GlobalExceptionHandler` gained handlers for the four new exceptions plus `HttpMessageNotReadableException` (fixes malformed JSON/invalid enum values that previously would have fallen through to a generic `500`).
+- Mandatory tests: `CustomerServiceTest` (14 Mockito unit tests), `CustomerApiTests` (20 full-context CRUD/validation/search/pagination/activity tests), `CustomerTenantIsolationTests` (10 tests — cross-org read/update/archive/activities/notes/history all fail as 404, plus body/query/header organization-id-smuggling attempts), `CustomerAuthorizationTests` (5 tests — unauthenticated/EMPLOYEE/SALES/MANAGER permission boundaries) — 49 new tests. Full suite: 116 backend tests passing, confirming no regression to Phases 1–6.
+- Manual `docker-compose` end-to-end validation: all 5 Flyway migrations apply cleanly against a fresh Postgres; create/list/search/filter/notes/activities/history/archive all verified via real HTTP; cross-org access confirmed to 404 (never leaking existence); no secrets in logs.
+- Security review (background subagent, scoped to the full Phase 7 diff): no CRITICAL or HIGH findings; merge-ready. One MEDIUM fixed before completion — a previously-set GSTIN could never be cleared via PATCH, because `@Pattern` only special-cases `null`, not the empty string that the PATCH "clear a field" convention relies on (fixed by widening the regex to `^$|<gstin-pattern>` in both `CustomerCreateRequest` and `CustomerUpdateRequest`, plus a regression test). Four LOW items noted and deferred as non-blocking: unescaped `%`/`_` LIKE wildcards in free-text search (cosmetic), no optimistic locking on `Customer` (pre-existing project-wide convention, not introduced here), an activity-then-flush ordering nitpick in `update()`, and no functional index on `LOWER(email)` for defense-in-depth beyond the existing service-layer normalization.
+
+No leads, products, quotations, invoices, tasks, documents, AI/RAG, analytics, dashboard, frontend, generic Audit Logging module, or generic Rate Limiting module were added in Phase 7 — those belong to Phase 8 onward.
 
 ## Process Per Phase
 
