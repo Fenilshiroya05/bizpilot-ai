@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 7 — the `crm` module is populated with the first real business resource (Customers), exercising Phase 5 tenant isolation and Phase 6 RBAC against actual data for the first time. Remaining business modules (`sales`, `products`, `documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 8 — the `sales` module is populated with Leads, adding assignment (a cross-tenant-validated reference to a `User`) as a new pattern beyond what Phase 7 (Customers) required. Remaining business modules (`products`, `documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -50,6 +50,15 @@
 - **Cross-module reuse, not duplication**: `CustomerService` obtains the current `Organization` entity via `organization.service.OrganizationService.getCurrentOrganization()` (going through that module's service, per CLAUDE.md §42), rather than reaching into `OrganizationRepository` directly.
 - Full detail (status model, archive/soft-delete decision, uniqueness, validation, tenant-isolation/RBAC test coverage) is in [security.md](security.md) and [database.md](database.md).
 
+## 1g. Sales Foundation — Leads (Phase 8)
+
+- **`sales` module** is populated for the first time: `entity/Lead`, `entity/LeadStatus`, `entity/LeadSource`, `entity/LeadPriority`, `entity/LeadActivity`, `entity/LeadActivityType`, `repository/LeadRepository`, `repository/LeadActivityRepository`, `dto/*`, `mapper/LeadMapper`, `mapper/LeadActivityMapper`, `service/LeadService`, `service/LeadSearchCriteria` (an internal filter-bundling record, not a REST DTO), `controller/LeadController`, `exception/*`. Same layering and conventions as `crm` (Phase 7): `Controller → Service → Repository → Entity`, DTOs/mappers at the boundary, tenant-safe `findByIdAndOrganizationId` lookups everywhere, `@PreAuthorize("hasAuthority('LEAD_*')")` on every endpoint using the Phase 6 permission catalog.
+- **New pattern beyond Phase 7: a cross-tenant-validated relationship to another entity.** Lead assignment references a `User` (via a plain `assignedToUserId` UUID, not a JPA relationship), and that reference must itself be tenant-validated — a candidate assignee must belong to the same organization as the lead. This required one small, additive extension to `identity.repository.UserRepository` (`findByIdAndOrganizationId`), following the exact same tenant-safe-lookup convention already established for `Customer`/`Lead` themselves, applied here to validating a *reference* rather than the primary resource.
+- **Assignment is a dedicated action endpoint (`POST /api/v1/leads/{id}/assign`), not a field on the general update DTO** — a plain nullable field on a PATCH-semantics DTO can't distinguish "leave unchanged" from "unassign," so assignment needed its own unambiguous request/response contract instead of overloading `LeadUpdateRequest`.
+- **Lead status and lead archival are two independent concerns**, unlike Customer (where `ARCHIVED` was one of the status values): CLAUDE.md §11 fixes `LeadStatus` to exactly 7 values with no archived state permitted, so `Lead` has both `status` (the fixed business-outcome enum) and a separate `archivedAt` timestamp (record-lifecycle state) — see [database.md](database.md) for the full reasoning.
+- **No Lead → Customer relationship** — a deliberate decision, not an oversight; CLAUDE.md never mentions one, and the only prior hint (this doc's own Phase-1-era indicative relationships diagram) was a non-binding placeholder, now removed. See [database.md](database.md) §0e.
+- Full detail (identifying-field decision, priority values, assignment/activity model, archive semantics, validation, tenant-isolation/RBAC test coverage) is in [security.md](security.md) and [database.md](database.md).
+
 ## 1. Style
 
 BizPilot AI is built as a **modular monolith** on the backend, not a microservices system. Business capabilities are separated into clearly bounded Java packages (modules) inside a single Spring Boot application. This gives most of the maintainability benefits of modular design (clear boundaries, independent evolution, testability) without the operational overhead of distributed systems, which is not justified at this stage.
@@ -98,7 +107,7 @@ Each module owns its own controller/service/repository/entity/dto/mapper/excepti
 | `identity` | Users, roles, permissions, user-role assignment ✅ (Phase 6) |
 | `organization` | Organizations and multi-tenancy context resolution |
 | `crm` | Customers, customer activities/notes ✅ (Phase 7) |
-| `sales` | Leads, quotations, invoices, sales pipeline |
+| `sales` | Leads ✅ (Phase 8), quotations, invoices, sales pipeline |
 | `products` | Product catalog, categories |
 | `documents` | Document upload, storage abstraction, text extraction, chunking |
 | `ai` | Spring AI integration: chat, embeddings, RAG, tool calling, conversation memory |

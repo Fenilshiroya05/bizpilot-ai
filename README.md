@@ -227,6 +227,31 @@ curl -s -X DELETE http://localhost:8080/api/v1/customers/$CUSTOMER_ID -H "Author
 
 See [docs/security.md](docs/security.md) and [docs/database.md](docs/database.md) for the customer status model, archive/soft-delete design, and the activities/notes/history design decision.
 
+### Leads (Phase 8)
+
+```bash
+# Create a lead (requires LEAD_CREATE — source is required, priority defaults to MEDIUM)
+curl -s -X POST http://localhost:8080/api/v1/leads \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Jane Prospect","company":"Acme Prospects","source":"WEBSITE","priority":"HIGH"}'
+
+# Assign (or unassign with "assigneeUserId": null) — the assignee must be in your organization
+curl -s -X POST http://localhost:8080/api/v1/leads/$LEAD_ID/assign \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"assigneeUserId":"'"$USER_ID"'"}'
+
+# Update status (an independent concept from archiving — see docs/database.md)
+curl -s -X PATCH http://localhost:8080/api/v1/leads/$LEAD_ID \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"status":"CONTACTED"}'
+
+# List/search/filter/paginate (archived defaults to excluding archived leads)
+curl -s "http://localhost:8080/api/v1/leads?status=CONTACTED&priority=HIGH&page=0&size=20" -H "Authorization: Bearer $TOKEN"
+
+# Archive (soft-delete via archivedAt, independent of status; requires LEAD_DELETE)
+curl -s -X DELETE http://localhost:8080/api/v1/leads/$LEAD_ID -H "Authorization: Bearer $TOKEN"
+```
+
+See [docs/security.md](docs/security.md) and [docs/database.md](docs/database.md) for the lead identifying-fields decision, priority values, assignment/activity model, and the status-vs-archive design decision.
+
 ## Running the Frontend
 
 Not yet available. Will be documented starting in Phase 20 once the Vite project is scaffolded (`cd frontend && npm install && npm run dev`).

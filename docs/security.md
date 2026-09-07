@@ -1,6 +1,6 @@
 # Security
 
-> Status: Phase 7 — the first real tenant-scoped, RBAC-gated business resource (Customers) is implemented, exercising the Phase 5 tenant-isolation and Phase 6 RBAC mechanisms against real data for the first time. Email verification and forgot/reset-password are acknowledged CLAUDE.md requirements **not yet implemented** — deferred to a later authentication pass (see §1a).
+> Status: Phase 8 — Leads are implemented, the second tenant-scoped, RBAC-gated business resource, adding a new cross-tenant validation surface (assignee-organization checks) beyond what Phase 7 (Customers) required. Email verification and forgot/reset-password are acknowledged CLAUDE.md requirements **not yet implemented** — deferred to a later authentication pass (see §1a).
 
 Priority order for this entire project: **Security > Correctness > Maintainability > Testability > Performance > Convenience.**
 
@@ -61,6 +61,12 @@ Priority order for this entire project: **Security > Correctness > Maintainabili
 - **Why "add a note" requires `CUSTOMER_UPDATE`, not `CUSTOMER_READ`**: CLAUDE.md doesn't define a dedicated note-creation permission, and adding one for a single sub-feature would be inventing scope the project spec doesn't ask for. `CUSTOMER_UPDATE` is the closest existing permission for "adds data to a customer record."
 - Verified end-to-end against real seeded roles (not test-only fixtures): `CustomerAuthorizationTests` proves EMPLOYEE (read-only) is forbidden from create/update/delete, SALES (CRUD minus delete) is forbidden from archiving, and MANAGER (full CRUD) can perform every operation.
 
+### 2c. Implementation Notes (Phase 8)
+
+- `sales.controller.LeadController` follows the identical `@PreAuthorize("hasAuthority('LEAD_*')")` pattern as Phase 7's `CustomerController`: `LEAD_READ` for all reads (details, listing/search, notes, activities, history), `LEAD_CREATE` for creation, `LEAD_UPDATE` for field updates, adding a note, *and* the dedicated assignment action, `LEAD_DELETE` for archiving. No new roles or permissions were introduced.
+- **Assignment reuses `LEAD_UPDATE`, not a new permission**: CLAUDE.md defines no dedicated assignment permission, and assigning a lead is a form of updating it — consistent with the same reasoning applied to Phase 7's note-creation permission choice.
+- Verified end-to-end against real seeded roles: `LeadAuthorizationTests` proves EMPLOYEE (read-only) is forbidden from create/update/archive, SALES (CRUD minus delete) is forbidden from archiving, and MANAGER (full CRUD) can perform every operation including assignment.
+
 ## 3. Multi-Tenancy / Tenant Isolation
 
 - The current organization is derived **only** from the authenticated user's security context — never from a client-supplied `organizationId`, header, or query parameter.
@@ -84,6 +90,13 @@ Priority order for this entire project: **Security > Correctness > Maintainabili
 - **Child records inherit tenant safety from their parent, not from their own column**: `customer_activities` (backing "activities"/"notes"/"history") has no `organization_id` column of its own — the same precedent as `security.entity.RefreshToken` (a child of `User`). Every read/write against it goes through `CustomerService`'s org-scoped `Customer` lookup *first*; only once that succeeds is `customer_id` used to query activities, so cross-tenant access is structurally impossible without ever duplicating `organization_id` on the child table.
 - **Mass-assignment resistance**: `CustomerCreateRequest`/`CustomerUpdateRequest` have no `organizationId` field at all — there is nothing for a client to smuggle at the DTO level. The organization is always resolved via `organization.service.OrganizationService.getCurrentOrganization()` (itself backed by `TenantContext`), never accepted from the request.
 - Verified by `CustomerTenantIsolationTests`: cross-org read/update/archive/activities/notes/history all fail as 404; an attempt to smuggle another organization's id via an extra JSON body field, a query parameter, and an `X-Organization-Id` header are each proven ineffective.
+
+### 3c. Implementation Notes (Phase 8 — cross-tenant validation on a relationship, not just a lookup)
+
+- **Lead lookups follow the identical Phase 7 pattern**: `sales.repository.LeadRepository.findByIdAndOrganizationId` is the only by-id lookup in `LeadService`; `lead_activities` has no `organization_id` column of its own, relying on the parent `Lead` already being resolved tenant-safely first (same precedent as `customer_activities`).
+- **New surface: assignee-organization validation.** Lead assignment introduces a cross-tenant risk Phase 7 didn't have — a *reference to another entity* (a `User`), not just a lookup of the resource itself. `sales.service.LeadService.assign()` validates the candidate assignee via `identity.repository.UserRepository.findByIdAndOrganizationId(assigneeId, lead.getOrganization().getId())` (a new method added to `UserRepository` for this purpose) — a user from Organization B can never become assignable to a lead in Organization A, even though both are validly authenticated users of the platform. Invalid/cross-org assignee attempts fail as `400 INVALID_ASSIGNEE` (not 404 — the assignee's *existence* isn't a tenant secret the way another org's lead would be, since user accounts aren't leaked information in the same sense).
+- **Mass-assignment resistance**: `LeadCreateRequest`/`LeadUpdateRequest` have no `organizationId` or `assignedToUserId` field — assignment is only reachable through the dedicated, separately-authorized `/assign` endpoint.
+- Verified by `LeadTenantIsolationTests`: cross-org read/update/archive/activities/notes/history all fail as 404; assigning another organization's lead fails as 404 (the lead itself is invisible); assigning a cross-organization *user* to one's own lead fails as `400 INVALID_ASSIGNEE`; organization-id smuggling via body/query/header all proven ineffective.
 
 ## 4. AI-Specific Security
 

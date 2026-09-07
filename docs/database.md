@@ -1,6 +1,6 @@
 # Database
 
-> Status: Phase 7 — `customers` and `customer_activities` exist (V5 migration), the first real tenant-scoped, RBAC-gated business tables. Built on top of `roles`/`permissions`/`user_roles`/`role_permissions` (Phase 6, V4), `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 8 (leads), per `docs/roadmap.md`.
+> Status: Phase 8 — `leads` and `lead_activities` exist (V6 migration). Built on top of `customers`/`customer_activities` (Phase 7, V5), `roles`/`permissions`/`user_roles`/`role_permissions` (Phase 6, V4), `organizations`/tenant-scoping (Phase 5, V3), `users`/`refresh_tokens` (Phase 4, V2), and the Phase 3 database foundation. Remaining business tables are introduced incrementally starting Phase 9 (products), per `docs/roadmap.md`.
 
 ## 0. Implementation Notes (Phase 3)
 
@@ -44,6 +44,17 @@
 - **Attribution without a JPA relationship**: `customer_activities.created_by_user_id` is a plain `UUID` column with a DB-level FK to `users`, not a `@ManyToOne` JPA relationship — it's an attribution stamp only; nothing in this phase needs to load the full `User` entity just to render an activity entry, so the extra relationship (and its lazy-loading surface) was left out.
 - **Indexes**: `ix_customers_organization_id` (tenant scoping, mandatory per §2), `ix_customers_organization_id_status` (supports the default listing query, which always filters by organization + status), `ix_customer_activities_customer_id` and `ix_customer_activities_customer_id_type` (support the notes-only/activities-only/history list endpoints). No trigram/full-text index was added for the free-text `q` search — a plain `LIKE`-based, database-paginated query is sufficient for this phase's scope; revisit if search performance becomes a real concern at larger data volumes.
 
+## 0e. Implementation Notes (Phase 8)
+
+- `V6__create_leads.sql` adds `leads` and `lead_activities` — both **explicitly named** in the CLAUDE.md §6 initial-entity list (unlike Phase 7, where `customer_activities` had to be invented as an extra table).
+- **Identifying fields are deliberately smaller than Customer's**: CLAUDE.md §11 defines no field list for leads at all (unlike Customer, §10) — an implementation decision, see [security.md](security.md) and `sales.entity.Lead`'s Javadoc. Only `name`, `company`, `email`, `phone` exist; no `address` or `gstin` (tax/account concerns that don't apply to an unqualified lead) and, unlike `customers`, **no `notes` column on the entity itself** — "Notes" (§11) is satisfied entirely by `lead_activities` (type `NOTE`), avoiding the field-vs-activity-feature duplication `customers.notes` has.
+- **No Lead → Customer relationship was implemented.** CLAUDE.md never mentions such a relationship anywhere (§10, §11, §14 all checked). This doc's own §4 relationships diagram previously sketched `customers 1──* leads (optional association)` as a Phase-1-era "indicative, subject to refinement" placeholder — that line has been removed; it was never a CLAUDE.md requirement, and adding an optional `customer_id` FK now would introduce tenant-validation surface area and IDOR test scenarios for a relationship nothing in this phase actually needs. Revisit only if a later phase (e.g. Quotations, which does need a customer association) requires linking leads to customers.
+- **`status` vs. `archived_at` are deliberately independent columns**, not one field: CLAUDE.md §11 fixes `leads.status` to exactly 7 values (`NEW`/`CONTACTED`/`QUALIFIED`/`PROPOSAL`/`NEGOTIATION`/`WON`/`LOST`) with **no `ARCHIVED` value permitted** — unlike Customer, archiving cannot be modeled as an 8th status value. `archived_at` is a separate nullable `TIMESTAMPTZ` (same nullable-timestamp-means-"hasn't happened" convention as `refresh_tokens.revoked_at`, Phase 4) — `NULL` = active/visible, non-`NULL` = archived/excluded from default listing. A lead can be `WON` or `LOST` and still not be archived.
+- **`priority`** (`LOW`/`MEDIUM`/`HIGH`) — CLAUDE.md requires the field but not its values (implementation decision, see `sales.entity.LeadPriority`'s Javadoc): deliberately a different, smaller set than Task priority (`LOW`/`MEDIUM`/`HIGH`/`URGENT`, CLAUDE.md §23), not reused wholesale just because it already exists elsewhere.
+- **`assigned_to_user_id`** is a nullable, plain `UUID` FK to `users` (no `ON DELETE` clause — default `RESTRICT`, consistent with `customer_activities.created_by_user_id`), validated at the application layer to belong to the same organization as the lead (`identity.repository.UserRepository.findByIdAndOrganizationId`, added in this phase) *and* to have `UserStatus.ACTIVE` (a disabled/locked assignee would leave the lead silently unworked with no signal to the assigner — caught in security review, fixed before completion) before ever being persisted — never a raw client-supplied value trusted as-is.
+- **`lead_activities` backs three CLAUDE.md §11 features with one table**, identical pattern to `customer_activities` (Phase 7): `type` (`CREATED`, `STATUS_CHANGED`, `ASSIGNED`, `ARCHIVED`, `NOTE`) discriminates "Lead activities," "Notes," and "Lead history" — one extra type (`ASSIGNED`) versus Customer's set, since Lead has an assignment feature Customer doesn't. No `organization_id` column of its own — same "child of a tenant-scoped parent" precedent.
+- **Indexes**: `ix_leads_organization_id` (tenant scoping), `ix_leads_organization_id_status` (default listing), `ix_leads_organization_id_archived_at` (default "exclude archived" / explicit "archived only" listing), `ix_leads_assigned_to_user_id` (assignee filtering and the assignee-organization validation join), `ix_leads_follow_up_date` (the follow-up-date filter), `ix_lead_activities_lead_id`/`ix_lead_activities_lead_id_type` (notes-only/activities-only/history list endpoints).
+
 ## 1. Engine
 
 - **PostgreSQL** is the primary datastore.
@@ -74,8 +85,8 @@
 | `role_permissions` ✅ (Phase 6, not in original CLAUDE.md list) | Join table assigning permissions to roles (composite PK, no `BaseEntity`) — see §0c for why this wasn't in the original entity list. |
 | `customers` ✅ (Phase 7) | CRM customer records — see §0d. |
 | `customer_activities` ✅ (Phase 7, not in original CLAUDE.md list) | Backs "activities"/"notes"/"history" (CLAUDE.md §10) in one table — see §0d for why this wasn't in the original entity list. |
-| `leads` | Sales leads, with status/source/priority. |
-| `lead_activities` | Activity/history log per lead. |
+| `leads` ✅ (Phase 8) | Sales leads, with status/source/priority — see §0e. No Lead→Customer relationship (deliberately not implemented — see §0e). |
+| `lead_activities` ✅ (Phase 8) | Backs "activities"/"notes"/"history" (CLAUDE.md §11) in one table — see §0e. |
 | `products` | Product catalog items. |
 | `product_categories` | Product categorization. |
 | `quotations` | Quotations issued to customers. |
@@ -109,8 +120,8 @@ users *──* roles (via user_roles)
 roles *──* permissions
 
 customers 1──* customer_activities
-customers 1──* leads (optional association)
 leads 1──* lead_activities
+-- No leads <-> customers relationship (deliberately not implemented — see §0e)
 
 quotations 1──* quotation_items
 quotation_items *──1 products

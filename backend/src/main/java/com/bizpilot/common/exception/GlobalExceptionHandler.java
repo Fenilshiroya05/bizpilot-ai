@@ -7,6 +7,10 @@ import com.bizpilot.crm.exception.DuplicateCustomerException;
 import com.bizpilot.crm.exception.InvalidCustomerDataException;
 import com.bizpilot.identity.entity.UserStatus;
 import com.bizpilot.identity.exception.EmailAlreadyExistsException;
+import com.bizpilot.sales.exception.InvalidAssigneeException;
+import com.bizpilot.sales.exception.InvalidLeadDataException;
+import com.bizpilot.sales.exception.LeadArchivedException;
+import com.bizpilot.sales.exception.LeadNotFoundException;
 import com.bizpilot.security.exception.AccountNotActiveException;
 import com.bizpilot.security.exception.InvalidCredentialsException;
 import com.bizpilot.security.exception.InvalidRefreshTokenException;
@@ -173,6 +177,50 @@ public class GlobalExceptionHandler {
         ApiError body = ApiError.of(
                 HttpStatus.BAD_REQUEST.value(),
                 "INVALID_CUSTOMER_DATA",
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(LeadNotFoundException.class)
+    public ResponseEntity<ApiError> handleLeadNotFound(LeadNotFoundException ex, HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.NOT_FOUND.value(),
+                "LEAD_NOT_FOUND",
+                "Lead not found",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+    }
+
+    @ExceptionHandler(LeadArchivedException.class)
+    public ResponseEntity<ApiError> handleLeadArchived(LeadArchivedException ex, HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.CONFLICT.value(),
+                "LEAD_ARCHIVED",
+                "This lead is archived and cannot be modified",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    @ExceptionHandler(InvalidAssigneeException.class)
+    public ResponseEntity<ApiError> handleInvalidAssignee(InvalidAssigneeException ex, HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "INVALID_ASSIGNEE",
+                "The specified assignee does not exist in this organization",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(InvalidLeadDataException.class)
+    public ResponseEntity<ApiError> handleInvalidLeadData(InvalidLeadDataException ex, HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "INVALID_LEAD_DATA",
                 ex.getMessage(),
                 request.getRequestURI()
         );
