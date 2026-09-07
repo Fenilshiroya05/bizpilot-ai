@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 4 — authentication & identity foundation (registration, login, JWT access tokens, refresh-token rotation, RBAC-role foundation) exists and is validated end-to-end, on top of the Phase 2 backend foundation and Phase 3 database foundation. Business modules (`organization`, `crm`, `sales`, `products`, `documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 5 — organizations (tenant root) and tenant isolation exist and are validated end-to-end, on top of Phase 4 (authentication & identity), Phase 3 (database foundation), and Phase 2 (backend foundation). Business modules (`crm`, `sales`, `products`, `documents`, `ai`, `analytics`, `tasks`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -18,11 +18,19 @@
 
 ## 1c. Authentication & Identity Foundation (Phase 4)
 
-- **`identity` module**: `User` entity (+ `UserRole`, `UserStatus` enums), `UserRepository`, `UserService` (registration business logic), `UserResponse`/`UserMapper` — the domain model for user accounts. Not yet tenant-scoped (no `organization_id` — that's Phase 5).
+- **`identity` module**: `User` entity (+ `UserRole`, `UserStatus` enums), `UserRepository`, `UserService` (registration business logic), `UserResponse`/`UserMapper` — the domain model for user accounts.
 - **`security` module**: JWT issuance/validation (`jwt/JwtService`, `jwt/JwtProperties`), the stateless bearer-token filter chain (`SecurityConfig`, `JwtAuthenticationFilter`), refresh-token lifecycle (`RefreshTokenService`, `entity/RefreshToken`), and the auth REST API (`AuthController`, `AuthService`, `dto/*`).
 - Controllers depend on services, services depend on repositories — same layering as every other module (CLAUDE.md §42). `AuthController` → `AuthService` → (`UserService`, `RefreshTokenService`, `JwtService`).
 - `security.CurrentUserProvider` is the one place that reads `SecurityContextHolder` — other modules should depend on it rather than touching Spring Security directly (CLAUDE.md's "keep authentication concerns inside the security/identity layer").
 - Full detail (token model, rotation/reuse-detection, enumeration resistance) is in [security.md](security.md).
+
+## 1d. Organizations & Multi-Tenancy Foundation (Phase 5)
+
+- **`organization` module**: `Organization` entity (`name` only), `OrganizationRepository`, `OrganizationService` (`create`, `getCurrentOrganization`), `OrganizationResponse`/`OrganizationMapper`, `OrganizationController` (`GET /api/v1/organizations/current` — the only endpoint), and `TenantContext` (the single reusable "what organization is this request for?" mechanism).
+- `identity.User` now has a mandatory `organization` relationship (`organization_id`, NOT NULL, set once at creation). `security.AuthService.register()` auto-provisions a new `Organization` per signup, then creates the `User` with it — see `docs/security.md §3a` for why (no invite/join flow exists yet).
+- **Cross-module dependency shape**: `identity` → `organization` (registration needs `OrganizationService` to provision a tenant) and `organization` → `security` (`TenantContext` needs `CurrentUserProvider`/`UserPrincipal`). `security` itself has no direct dependency on `organization` — `AuthService` only ever touches `Organization` indirectly, via `User.getOrganization().getId()`. This keeps the layering acyclic in practice even though, at the whole-system level, tenancy and identity are inherently intertwined.
+- The JWT now carries an `orgId` claim alongside `sub`/`role`, so `TenantContext` never needs a database lookup to resolve the current tenant, consistent with the no-DB-hit-per-request design from Phase 4.
+- Full detail (tenant resolution mechanism, isolation guarantees, the mandatory cross-tenant test scenario) is in [security.md](security.md) and [database.md](database.md).
 
 ## 1. Style
 

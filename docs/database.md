@@ -1,6 +1,6 @@
 # Database
 
-> Status: Phase 4 — `users` and `refresh_tokens` exist (V2 migration), on top of the Phase 3 database foundation (datasource, JPA/Hibernate, Flyway). Remaining business tables are introduced incrementally starting Phase 5 (organizations), per `docs/roadmap.md`.
+> Status: Phase 5 — `organizations` exists as the tenant root, and `users.organization_id` (NOT NULL) links every user to exactly one organization (V3 migration), on top of `users`/`refresh_tokens` (Phase 4, V2) and the Phase 3 database foundation (datasource, JPA/Hibernate, Flyway). Remaining business tables are introduced incrementally starting Phase 7 (customers), per `docs/roadmap.md`.
 
 ## 0. Implementation Notes (Phase 3)
 
@@ -8,7 +8,6 @@
 - **Hibernate**: `spring.jpa.hibernate.ddl-auto=validate` — Hibernate never creates or alters schema; Flyway is the sole migration authority (CLAUDE.md §6, §33).
 - **Flyway**: migrations live in `backend/src/main/resources/db/migration/`, versioned `V1__initial_schema.sql`, `V2__...`, etc., and are immutable once merged. `V1__initial_schema.sql` currently only enables the `vector` (PGVector) extension — no business tables yet, since those belong to later phases.
 - **Base persistence support**: `com.bizpilot.common.persistence.BaseEntity` is a `@MappedSuperclass` providing a JPA-generated `UUID` id plus `created_at`/`updated_at` auditing (via Spring Data JPA auditing, enabled in `common/config/JpaConfig`). Every future entity extends it.
-- **Tenant-scoped base entity**: deferred until Phase 5, when the `organizations` table exists. At that point, a `TenantScopedEntity extends BaseEntity` (adding `organization_id`) will be introduced, and every business entity from Phase 7 onward extends *that* instead of `BaseEntity` directly.
 - **Testing**: `backend/src/test/java/com/bizpilot/TestcontainersConfiguration.java` provides a real, containerized PostgreSQL (`pgvector/pgvector:pg16`, matching `docker-compose.yml`) via Spring Boot's `@ServiceConnection`, used by both application-context tests and a dedicated `BaseEntityPersistenceTest` (which round-trips a test-only fixture entity/table defined only under `src/test/**`, activated only in the `test` profile — never part of production migrations or schema).
 
 ## 0a. Implementation Notes (Phase 4)
@@ -17,6 +16,13 @@
 - `users.role` and `users.status` are plain `VARCHAR` columns with a `CHECK` constraint restricting them to the enum values, not yet the full `roles`/`permissions`/`user_roles` junction schema from §3 below — that arrives in Phase 6.
 - `refresh_tokens.token_hash` stores only the SHA-256 hash of the refresh token, never the raw value (see [security.md](security.md)).
 - Both tables extend the `BaseEntity` foundation from Phase 3 (UUID id, `created_at`/`updated_at`).
+
+## 0b. Implementation Notes (Phase 5)
+
+- `V3__create_organizations_and_link_users.sql` adds `organizations` (id, `name`, `created_at`/`updated_at` — no other fields; CLAUDE.md doesn't specify an organization field list) and `users.organization_id` (`UUID NOT NULL REFERENCES organizations(id)`, indexed).
+- `organization_id` is **NOT NULL with no default** — CLAUDE.md §7 states "every business belongs to an organization" as an unconditional invariant, and the project has no production data yet, so no backfill step was included. This migration will therefore fail against **any** environment (not just a local machine) whose `users` table already has rows — including a shared staging/QA database seeded during earlier Phase 4 testing. Migrations are immutable (CLAUDE.md §33), so that case needs a *new* migration with a real backfill, not an edit to this one; for a disposable local/dev database, `docker compose down -v` is sufficient.
+- **No generic `TenantScopedEntity` base class was introduced.** The originally-anticipated abstraction (see prior revision of this doc) would have been premature: `User` is still the *only* entity that needs `organization_id` in this phase (no customers/leads/etc. exist yet — those are Phase 7+). Extracting a shared base class for a single use case is exactly the "generic multi-tenancy framework the application doesn't need yet" the Phase 5 spec explicitly warns against. Revisit this when the first real business entity (Phase 7) needs the same column.
+- **Tenant resolution**: the current organization is derived only from the authenticated JWT (`organization.TenantContext`, backed by `security.CurrentUserProvider`) — never from client-supplied input. See [security.md](security.md) for the full mechanism and the reasoning behind auto-provisioning an organization at registration.
 
 ## 1. Engine
 
@@ -39,8 +45,8 @@
 
 | Table | Purpose |
 |---|---|
-| `organizations` | Tenant root. Every business record belongs to one organization. |
-| `users` ✅ (Phase 4) | User accounts. Not yet organization-scoped — see §0a. |
+| `organizations` ✅ (Phase 5) | Tenant root. `name` only — CLAUDE.md specifies no other fields. Every business record will ultimately belong to one. |
+| `users` ✅ (Phase 4, org-scoped since Phase 5) | User accounts. `organization_id` NOT NULL since Phase 5 — see §0b. |
 | `refresh_tokens` ✅ (Phase 4, not in original CLAUDE.md list) | Hashed refresh-token sessions, one row per issued token; supports rotation/revocation. |
 | `roles` | RBAC roles (OWNER, ADMIN, MANAGER, SALES, EMPLOYEE) — Phase 4 stores this as a single column on `users` instead; the full junction-table model here is Phase 6. |
 | `permissions` | Granular permissions (e.g. `CUSTOMER_READ`, `AI_USE`). |

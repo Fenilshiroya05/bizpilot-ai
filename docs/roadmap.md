@@ -10,7 +10,7 @@ Status legend: `[x]` complete · `[ ]` not started.
 | 2 | Backend foundation | [x] |
 | 3 | Database + Flyway | [x] |
 | 4 | Authentication | [x] |
-| 5 | Organizations + multi-tenancy | [ ] |
+| 5 | Organizations + multi-tenancy | [x] |
 | 6 | RBAC | [ ] |
 | 7 | Customers | [ ] |
 | 8 | Leads | [ ] |
@@ -81,6 +81,18 @@ No authentication, organizations/multi-tenancy schema, RBAC, or other business t
 - Fixed a pre-existing gap surfaced during validation: unmapped routes now return `404` instead of `500` (`GlobalExceptionHandler`).
 
 No organizations/multi-tenancy schema, granular RBAC permissions, or other business tables were added in Phase 4. Email verification and forgot/reset-password (CLAUDE.md §8) are acknowledged but not yet implemented — deferred to a later authentication pass (see `docs/security.md §1a`).
+
+## Phase 5 — Completed Scope
+
+- `organization` module: `Organization` entity (`name` only — CLAUDE.md specifies no field list), `OrganizationRepository`, `OrganizationService` (`create`, `getCurrentOrganization`), `OrganizationResponse`/`OrganizationMapper`, `OrganizationController`, and `TenantContext` (the single reusable current-organization resolution mechanism).
+- `identity.User` gained a mandatory `organization` relationship (`organization_id` NOT NULL); `security.AuthService.register()` auto-provisions a new organization per signup (`RegisterRequest.organizationName`).
+- JWT access tokens now carry an `orgId` claim; `security.UserPrincipal`/`JwtAuthenticationFilter` updated accordingly — tenant resolution still requires no database lookup per request.
+- Endpoint: `GET /api/v1/organizations/current` — the only organization-facing endpoint, resolves strictly from the JWT, accepts no organization id from the client in any form.
+- `V3__create_organizations_and_link_users.sql` — `organizations` table + `users.organization_id` (NOT NULL FK, indexed).
+- 9 new tests (2 `TenantContextTest`, 3 `OrganizationServiceTest`, 4 `TenantIsolationTests`) plus updates to existing Phase 4 tests for the new JWT claim/constructor signatures — 51 backend tests passing total. `TenantIsolationTests` proves the two mandatory scenarios: cross-tenant data is never returned, and a client-supplied organization id (via header and query parameter) never overrides the authenticated tenant — verified both via automated tests and manual `docker-compose` end-to-end validation.
+- No generic `TenantScopedEntity` base class was introduced — `User` is still the only entity needing `organization_id`; that abstraction is deferred until a second entity actually needs it (Phase 7+), per the project's "don't over-engineer a generic multi-tenancy framework" guidance.
+
+No RBAC/roles/permissions, business entities (customers/leads/products/etc.), or frontend work were added in Phase 5 — those belong to Phase 6 onward.
 
 ## Process Per Phase
 

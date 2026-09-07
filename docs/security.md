@@ -1,6 +1,6 @@
 # Security
 
-> Status: Phase 4 — authentication (registration, login, JWT access tokens, refresh-token rotation with reuse detection, logout) is implemented and validated. Full granular RBAC (permission catalog, `roles`/`permissions`/`user_roles` tables) remains Phase 6; organizations/multi-tenancy remains Phase 5. Email verification and forgot/reset-password are acknowledged CLAUDE.md requirements **not yet implemented** — deferred to a later authentication pass (see §1a).
+> Status: Phase 5 — organizations (tenant root) and tenant isolation are implemented and validated, on top of Phase 4 authentication (registration, login, JWT access tokens, refresh-token rotation with reuse detection, logout). Full granular RBAC (permission catalog, `roles`/`permissions`/`user_roles` tables) remains Phase 6. Email verification and forgot/reset-password are acknowledged CLAUDE.md requirements **not yet implemented** — deferred to a later authentication pass (see §1a).
 
 Priority order for this entire project: **Security > Correctness > Maintainability > Testability > Performance > Convenience.**
 
@@ -24,7 +24,7 @@ Priority order for this entire project: **Security > Correctness > Maintainabili
 - **Login enumeration resistance**: login never distinguishes "unknown email" from "wrong password" — both return a generic `401 INVALID_CREDENTIALS`. A fixed, precomputed BCrypt hash is compared against when no user is found, so the response time doesn't leak whether an email is registered.
 - **Account-status leakage prevention**: password is verified *before* account status (`ACTIVE`/`DISABLED`/`LOCKED`) is checked, so a disabled/locked account's status is never revealed to someone who doesn't already know the password (both return `401` for a wrong password regardless of status; only a *correct* password against a non-active account returns `403 ACCOUNT_DISABLED`/`ACCOUNT_LOCKED`).
 - **No password/token logging**: verified — no code path logs raw passwords, password hashes, JWTs, or raw refresh tokens.
-- **Default role on registration**: every self-registered user gets `role=EMPLOYEE`, `status=ACTIVE` — least-privilege default. Proper role assignment/invite flows arrive with Organizations (Phase 5) and full RBAC (Phase 6).
+- **Default role on registration**: every self-registered user gets `role=EMPLOYEE`, `status=ACTIVE` — least-privilege default. Proper role assignment/invite flows arrive with full RBAC (Phase 6).
 - **Not yet implemented** (acknowledged CLAUDE.md §8 gaps): email verification, forgot-password, reset-password. Account lockout (`LOCKED`) is a valid, checked state but nothing currently transitions a user into it automatically — that arrives with rate-limiting/brute-force protection (CLAUDE.md §26).
 
 ## 2. Authorization (RBAC)
@@ -42,6 +42,15 @@ Priority order for this entire project: **Security > Correctness > Maintainabili
 - Every repository query against a tenant-scoped table filters by `organization_id`.
 - RAG/vector search results are filtered by `organization_id` at retrieval time, before being sent to the LLM.
 - Automated tests must specifically exercise cross-tenant access attempts and assert they fail (see [database.md](database.md) and the testing strategy).
+
+### 3a. Implementation Notes (Phase 5)
+
+- **Tenant root**: `organizations` (name only — see `docs/database.md §3`). Every `User` belongs to exactly one, via a NOT NULL `organization_id` FK, assigned once at creation and never reassigned in this phase.
+- **Provisioning**: since CLAUDE.md defines no invite/join-organization flow, `POST /api/v1/auth/register` auto-provisions a brand-new organization per signup (`RegisterRequest.organizationName`, required). There is intentionally no separate "create organization" endpoint yet.
+- **Resolution mechanism**: `organization.TenantContext.currentOrganizationId()` is the *only* way application code determines the current tenant. It reads `organizationId` off `security.UserPrincipal`, which `JwtAuthenticationFilter` builds entirely from the validated JWT's `orgId` claim — no database lookup, and no path through which a request parameter, body field, or header could ever be substituted. `organization.service.OrganizationService.getCurrentOrganization()` is the only service method that resolves an `Organization` for a controller, and it exclusively uses `TenantContext` — there is deliberately no "get organization by arbitrary id" method reachable from a controller (CLAUDE.md §7, project spec §11).
+- **API surface**: exactly one endpoint, `GET /api/v1/organizations/current` — it accepts no organization id from the client in any form. This was verified with an explicit test that sends another organization's id via both a header (`X-Organization-Id`) and a query parameter and confirms the response is unaffected (`TenantIsolationTests`).
+- **No "user without an organization" case**: the NOT NULL constraint plus mandatory provisioning at registration mean this state cannot occur in this design — not tested, since there's nothing to trigger it (see `docs/database.md §0b` for the reasoning).
+- **Malformed-claim safety**: `JwtAuthenticationFilter.authenticate` wraps claim extraction (`sub`/`role`/`orgId`) in a try/catch — a validly-signed token with a missing or malformed claim (e.g. one minted before the `orgId` claim existed) is treated exactly like any other invalid token (left unauthenticated → `401`), never an uncaught exception that would bypass the standard `ApiError` envelope. Covered by an explicit regression test (`AuthenticationFlowTests.meWithValidSignatureButMissingOrganizationClaimReturns401NotAServerError`).
 
 ## 4. AI-Specific Security
 

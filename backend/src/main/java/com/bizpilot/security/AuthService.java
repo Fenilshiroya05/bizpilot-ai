@@ -6,6 +6,8 @@ import com.bizpilot.identity.entity.UserStatus;
 import com.bizpilot.identity.mapper.UserMapper;
 import com.bizpilot.identity.repository.UserRepository;
 import com.bizpilot.identity.service.UserService;
+import com.bizpilot.organization.entity.Organization;
+import com.bizpilot.organization.service.OrganizationService;
 import com.bizpilot.security.dto.AuthResponse;
 import com.bizpilot.security.dto.LoginRequest;
 import com.bizpilot.security.dto.RefreshTokenRequest;
@@ -44,21 +46,27 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
+    private final OrganizationService organizationService;
 
     public AuthService(UserRepository userRepository, UserService userService, UserMapper userMapper,
                         PasswordEncoder passwordEncoder, JwtService jwtService,
-                        RefreshTokenService refreshTokenService) {
+                        RefreshTokenService refreshTokenService, OrganizationService organizationService) {
         this.userRepository = userRepository;
         this.userService = userService;
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.refreshTokenService = refreshTokenService;
+        this.organizationService = organizationService;
     }
 
     @Transactional
     public UserResponse register(RegisterRequest request) {
-        User user = userService.register(request.email(), request.password(), request.firstName(), request.lastName());
+        // Auto-provisions a new organization per registration — see the comment
+        // on RegisterRequest.organizationName for why (no invite/join flow exists yet).
+        Organization organization = organizationService.create(request.organizationName());
+        User user = userService.register(request.email(), request.password(), request.firstName(),
+                request.lastName(), organization);
         return userMapper.toResponse(user);
     }
 
@@ -100,7 +108,7 @@ public class AuthService {
     }
 
     private AuthResponse buildAuthResponse(User user, String rawRefreshToken) {
-        String accessToken = jwtService.generateAccessToken(user.getId(), user.getRole());
+        String accessToken = jwtService.generateAccessToken(user.getId(), user.getRole(), user.getOrganization().getId());
         long expiresInSeconds = jwtService.getAccessTokenTtl().toSeconds();
         return AuthResponse.of(accessToken, rawRefreshToken, expiresInSeconds, userMapper.toResponse(user));
     }

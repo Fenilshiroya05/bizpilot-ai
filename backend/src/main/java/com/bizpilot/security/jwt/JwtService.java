@@ -27,6 +27,7 @@ public class JwtService {
 
     private static final String ISSUER = "bizpilot-ai";
     private static final String CLAIM_ROLE = "role";
+    private static final String CLAIM_ORGANIZATION_ID = "orgId";
     private static final int MIN_SECRET_BYTES = 32; // 256 bits, required for HS256
 
     private final JwtProperties properties;
@@ -42,12 +43,13 @@ public class JwtService {
         this.key = Keys.hmacShaKeyFor(keyBytes);
     }
 
-    public String generateAccessToken(UUID userId, UserRole role) {
+    public String generateAccessToken(UUID userId, UserRole role, UUID organizationId) {
         Instant now = Instant.now();
         Instant expiry = now.plus(properties.accessTokenExpirationMinutes(), ChronoUnit.MINUTES);
         return Jwts.builder()
                 .subject(userId.toString())
                 .claim(CLAIM_ROLE, role.name())
+                .claim(CLAIM_ORGANIZATION_ID, organizationId.toString())
                 .issuer(ISSUER)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(expiry))
@@ -78,5 +80,9 @@ public class JwtService {
 
     public UserRole extractRole(Jws<Claims> claims) {
         return UserRole.valueOf(claims.getPayload().get(CLAIM_ROLE, String.class));
+    }
+
+    public UUID extractOrganizationId(Jws<Claims> claims) {
+        return UUID.fromString(claims.getPayload().get(CLAIM_ORGANIZATION_ID, String.class));
     }
 }

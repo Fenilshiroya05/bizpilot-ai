@@ -5,6 +5,7 @@ import com.bizpilot.identity.entity.UserRole;
 import com.bizpilot.identity.entity.UserStatus;
 import com.bizpilot.identity.exception.EmailAlreadyExistsException;
 import com.bizpilot.identity.repository.UserRepository;
+import com.bizpilot.organization.entity.Organization;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -13,8 +14,10 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Owns user creation and lookup. Registration always assigns the
  * lowest-privilege role ({@link UserRole#EMPLOYEE}) and {@link UserStatus#ACTIVE}
- * status — proper role assignment/invite flows arrive with Organizations
- * (Phase 5) and full RBAC (Phase 6).
+ * status — full RBAC (granular permissions) arrives in Phase 6. The
+ * organization the new user belongs to is created by the caller (see
+ * {@code security.AuthService}, which auto-provisions one per registration)
+ * and passed in here — {@code UserService} doesn't decide tenant assignment.
  */
 @Service
 public class UserService {
@@ -28,7 +31,8 @@ public class UserService {
     }
 
     @Transactional
-    public User register(String email, String rawPassword, String firstName, String lastName) {
+    public User register(String email, String rawPassword, String firstName, String lastName,
+                          Organization organization) {
         String normalizedEmail = email.trim().toLowerCase();
         if (userRepository.existsByEmailIgnoreCase(normalizedEmail)) {
             throw new EmailAlreadyExistsException(normalizedEmail);
@@ -40,7 +44,8 @@ public class UserService {
                 firstName.trim(),
                 lastName.trim(),
                 UserRole.EMPLOYEE,
-                UserStatus.ACTIVE
+                UserStatus.ACTIVE,
+                organization
         );
         try {
             // saveAndFlush (not save): forces the INSERT — and therefore the unique

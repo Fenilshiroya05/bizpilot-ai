@@ -17,6 +17,7 @@ public record UserResponse(
         String lastName,
         UserRole role,
         UserStatus status,
+        UUID organizationId,
         Instant createdAt
 ) {
 }

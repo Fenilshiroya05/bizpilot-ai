@@ -58,12 +58,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     private void authenticate(Jws<Claims> claims) {
-        UUID userId = jwtService.extractUserId(claims);
-        UserRole role = jwtService.extractRole(claims);
-        UserPrincipal principal = new UserPrincipal(userId, role);
-        List<GrantedAuthority> authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));
+        try {
+            UUID userId = jwtService.extractUserId(claims);
+            UserRole role = jwtService.extractRole(claims);
+            UUID organizationId = jwtService.extractOrganizationId(claims);
+            UserPrincipal principal = new UserPrincipal(userId, role, organizationId);
+            List<GrantedAuthority> authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));
 
-        var authentication = new UsernamePasswordAuthenticationToken(principal, null, authorities);
-        SecurityContextHolder.getContext().setAuthentication(authentication);
+            var authentication = new UsernamePasswordAuthenticationToken(principal, null, authorities);
+            SecurityContextHolder.getContext().setAuthentication(authentication);
+        } catch (RuntimeException e) {
+            // A validly-signed token with a missing/malformed claim (e.g. one minted
+            // before a claim existed) must fail exactly like any other invalid token —
+            // left unauthenticated, not an uncaught exception escaping the filter chain
+            // (which would bypass RestAuthenticationEntryPoint's ApiError envelope).
+        }
     }
 }

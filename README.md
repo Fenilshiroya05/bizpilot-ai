@@ -173,13 +173,13 @@ Active Spring profile defaults to `local` (override with `SPRING_PROFILES_ACTIVE
 
 > If `localhost:5432` or `localhost:8080` is already in use by something else on your machine (another local Postgres install, another app), either stop that process or remap the published port in `docker-compose.yml` — this is a host-machine conflict, not a BizPilot AI issue.
 
-### Authentication (Phase 4)
+### Authentication (Phase 4) & Organizations (Phase 5)
 
 ```bash
-# Register
+# Register (auto-provisions a new organization — see organizationName)
 curl -s -X POST http://localhost:8080/api/v1/auth/register \
   -H 'Content-Type: application/json' \
-  -d '{"email":"you@example.com","password":"Passw0rd!","firstName":"You","lastName":"Test"}'
+  -d '{"email":"you@example.com","password":"Passw0rd!","firstName":"You","lastName":"Test","organizationName":"Your Company"}'
 
 # Login (returns accessToken + refreshToken)
 curl -s -X POST http://localhost:8080/api/v1/auth/login \
@@ -188,6 +188,9 @@ curl -s -X POST http://localhost:8080/api/v1/auth/login \
 
 # Current user (replace $TOKEN with the accessToken above)
 curl -s http://localhost:8080/api/v1/auth/me -H "Authorization: Bearer $TOKEN"
+
+# Current organization
+curl -s http://localhost:8080/api/v1/organizations/current -H "Authorization: Bearer $TOKEN"
 
 # Refresh (rotates the refresh token — the old one becomes invalid)
 curl -s -X POST http://localhost:8080/api/v1/auth/refresh \
@@ -199,7 +202,7 @@ curl -s -X POST http://localhost:8080/api/v1/auth/logout \
   -d "{\"refreshToken\":\"$REFRESH_TOKEN\"}"
 ```
 
-New users register with `role=EMPLOYEE`, `status=ACTIVE` by default — every other endpoint besides `/register`, `/login`, `/refresh`, and `/actuator/health` requires a valid `Authorization: Bearer <accessToken>` header. See [docs/security.md](docs/security.md) for the full token/security model.
+New users register with `role=EMPLOYEE`, `status=ACTIVE`, and a brand-new organization (named after `organizationName`) by default — every other endpoint besides `/register`, `/login`, `/refresh`, and `/actuator/health` requires a valid `Authorization: Bearer <accessToken>` header. The current organization is always derived from that token, never from client input. See [docs/security.md](docs/security.md) for the full token/security/tenancy model.
 
 ## Running the Frontend
 

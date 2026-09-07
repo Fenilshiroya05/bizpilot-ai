@@ -10,6 +10,10 @@ import java.util.UUID;
  * request. Login itself is verified manually in {@code AuthService} (not via
  * {@code AuthenticationManager}), so the exact order of checks (password
  * before account status) is under our control; see docs/security.md.
+ *
+ * <p>{@code organizationId} is the sole basis for tenant resolution
+ * ({@code organization.TenantContext}) — it comes only from the signed JWT,
+ * never from client-supplied request data (CLAUDE.md §7).
  */
-public record UserPrincipal(UUID userId, UserRole role) {
+public record UserPrincipal(UUID userId, UserRole role, UUID organizationId) {
 }

@@ -19,22 +19,24 @@ class JwtServiceTest {
     }
 
     @Test
-    void generatesTokenThatParsesBackToTheSameUserAndRole() {
+    void generatesTokenThatParsesBackToTheSameUserRoleAndOrganization() {
         JwtService jwtService = serviceWith(15);
         UUID userId = UUID.randomUUID();
+        UUID organizationId = UUID.randomUUID();
 
-        String token = jwtService.generateAccessToken(userId, UserRole.ADMIN);
+        String token = jwtService.generateAccessToken(userId, UserRole.ADMIN, organizationId);
         Optional<Jws<Claims>> parsed = jwtService.parseAndValidate(token);
 
         assertThat(parsed).isPresent();
         assertThat(jwtService.extractUserId(parsed.get())).isEqualTo(userId);
         assertThat(jwtService.extractRole(parsed.get())).isEqualTo(UserRole.ADMIN);
+        assertThat(jwtService.extractOrganizationId(parsed.get())).isEqualTo(organizationId);
     }
 
     @Test
     void rejectsExpiredToken() {
         JwtService jwtService = serviceWith(-1); // already expired the instant it's issued
-        String token = jwtService.generateAccessToken(UUID.randomUUID(), UserRole.EMPLOYEE);
+        String token = jwtService.generateAccessToken(UUID.randomUUID(), UserRole.EMPLOYEE, UUID.randomUUID());
 
         assertThat(jwtService.parseAndValidate(token)).isEmpty();
     }
@@ -51,7 +53,7 @@ class JwtServiceTest {
         JwtService issuer = new JwtService(new JwtProperties("issuer-secret-1234567890-1234567890abcd", 15, 7));
         JwtService verifier = new JwtService(new JwtProperties("verifier-secret-1234567890-1234567890abc", 15, 7));
 
-        String token = issuer.generateAccessToken(UUID.randomUUID(), UserRole.OWNER);
+        String token = issuer.generateAccessToken(UUID.randomUUID(), UserRole.OWNER, UUID.randomUUID());
 
         assertThat(verifier.parseAndValidate(token)).isEmpty();
     }

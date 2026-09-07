@@ -6,11 +6,15 @@ import com.bizpilot.identity.entity.User;
 import com.bizpilot.identity.entity.UserRole;
 import com.bizpilot.identity.entity.UserStatus;
 import com.bizpilot.identity.repository.UserRepository;
+import com.bizpilot.organization.entity.Organization;
+import com.bizpilot.organization.repository.OrganizationRepository;
 import com.bizpilot.security.dto.AuthResponse;
 import com.bizpilot.security.dto.LoginRequest;
 import com.bizpilot.security.dto.RefreshTokenRequest;
 import com.bizpilot.security.dto.RegisterRequest;
 import com.bizpilot.security.jwt.JwtService;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -24,6 +28,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
+
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Date;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -42,6 +53,9 @@ class AuthenticationFlowTests {
     private UserRepository userRepository;
 
     @Autowired
+    private OrganizationRepository organizationRepository;
+
+    @Autowired
     private PasswordEncoder passwordEncoder;
 
     @Autowired
@@ -55,7 +69,7 @@ class AuthenticationFlowTests {
 
     @Test
     void registerWithValidInputCreatesUserAndNeverReturnsThePasswordHash() {
-        RegisterRequest request = new RegisterRequest("alice@example.com", "Passw0rd!", "Alice", "Smith");
+        RegisterRequest request = new RegisterRequest("alice@example.com", "Passw0rd!", "Alice", "Smith", "Alice's Company");
 
         ResponseEntity<String> response = restTemplate.postForEntity(url("/api/v1/auth/register"), request, String.class);
 
@@ -68,7 +82,7 @@ class AuthenticationFlowTests {
 
     @Test
     void registerWithDuplicateEmailReturns409() {
-        RegisterRequest request = new RegisterRequest("bob@example.com", "Passw0rd!", "Bob", "Jones");
+        RegisterRequest request = new RegisterRequest("bob@example.com", "Passw0rd!", "Bob", "Jones", "Bob's Company");
         restTemplate.postForEntity(url("/api/v1/auth/register"), request, String.class);
 
         ResponseEntity<ApiError> response = restTemplate.postForEntity(url("/api/v1/auth/register"), request, ApiError.class);
@@ -79,7 +93,7 @@ class AuthenticationFlowTests {
 
     @Test
     void registerWithWeakPasswordReturns400ValidationError() {
-        RegisterRequest request = new RegisterRequest("weakpass@example.com", "short", "A", "B");
+        RegisterRequest request = new RegisterRequest("weakpass@example.com", "short", "A", "B", "A's Company");
 
         ResponseEntity<ApiError> response = restTemplate.postForEntity(url("/api/v1/auth/register"), request, ApiError.class);
 
@@ -174,9 +188,35 @@ class AuthenticationFlowTests {
     }
 
     @Test
+    void meWithValidSignatureButMissingOrganizationClaimReturns401NotAServerError() {
+        // A validly-signed token that simply lacks the org claim (e.g. one minted
+        // before Phase 5 added it) must be treated as unauthenticated, not crash
+        // the request — see JwtAuthenticationFilter.authenticate's catch block.
+        SecretKey key = Keys.hmacShaKeyFor(
+                "test-only-jwt-secret-do-not-use-outside-automated-tests-1234567890".getBytes(StandardCharsets.UTF_8));
+        Instant now = Instant.now();
+        String tokenMissingOrgClaim = Jwts.builder()
+                .subject(UUID.randomUUID().toString())
+                .claim("role", "EMPLOYEE")
+                .issuer("bizpilot-ai")
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plus(15, ChronoUnit.MINUTES)))
+                .signWith(key)
+                .compact();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(tokenMissingOrgClaim);
+        ResponseEntity<ApiError> response = restTemplate.exchange(
+                url("/api/v1/auth/me"), HttpMethod.GET, new HttpEntity<>(headers), ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(response.getBody().code()).isEqualTo("UNAUTHENTICATED");
+    }
+
+    @Test
     void meWithValidTokenReturnsCurrentUserProfile() {
         User user = registerDirect("heidi@example.com", "Passw0rd!", "Heidi", "Fox", UserRole.EMPLOYEE, UserStatus.ACTIVE);
-        String accessToken = jwtService.generateAccessToken(user.getId(), user.getRole());
+        String accessToken = jwtService.generateAccessToken(user.getId(), user.getRole(), user.getOrganization().getId());
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
@@ -277,7 +317,7 @@ class AuthenticationFlowTests {
     @Test
     void adminOnlyEndpointAllowsAdminRole() {
         User admin = registerDirect("laura@example.com", "Passw0rd!", "Laura", "Byrne", UserRole.ADMIN, UserStatus.ACTIVE);
-        String token = jwtService.generateAccessToken(admin.getId(), admin.getRole());
+        String token = jwtService.generateAccessToken(admin.getId(), admin.getRole(), admin.getOrganization().getId());
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -290,7 +330,7 @@ class AuthenticationFlowTests {
     @Test
     void adminOnlyEndpointForbidsNonAdminRole() {
         User employee = registerDirect("mallory@example.com", "Passw0rd!", "Mallory", "Cruz", UserRole.EMPLOYEE, UserStatus.ACTIVE);
-        String token = jwtService.generateAccessToken(employee.getId(), employee.getRole());
+        String token = jwtService.generateAccessToken(employee.getId(), employee.getRole(), employee.getOrganization().getId());
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -312,7 +352,8 @@ class AuthenticationFlowTests {
 
     private User registerDirect(String email, String rawPassword, String firstName, String lastName,
                                  UserRole role, UserStatus status) {
-        User user = new User(email, passwordEncoder.encode(rawPassword), firstName, lastName, role, status);
+        Organization organization = organizationRepository.save(new Organization(firstName + "'s Test Org"));
+        User user = new User(email, passwordEncoder.encode(rawPassword), firstName, lastName, role, status, organization);
         return userRepository.save(user);
     }
 }

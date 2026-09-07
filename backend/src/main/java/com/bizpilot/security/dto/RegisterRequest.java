@@ -19,6 +19,12 @@ public record RegisterRequest(
 
         @NotBlank @Size(max = 100) String firstName,
 
-        @NotBlank @Size(max = 100) String lastName
+        @NotBlank @Size(max = 100) String lastName,
+
+        // Phase 5: registration auto-provisions a new organization (the tenant
+        // root) for the registering user — CLAUDE.md doesn't define an
+        // invite/join-existing-organization flow, so this is the simplest way
+        // to satisfy "every business belongs to an organization" (§7).
+        @NotBlank @Size(max = 255) String organizationName
 ) {
 }
