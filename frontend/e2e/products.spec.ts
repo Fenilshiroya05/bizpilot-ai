@@ -294,6 +294,21 @@ test.describe('products', () => {
 
   test('20. a failed list request shows a retryable error state', async ({ page }) => {
     await mockAuthenticatedSession(page)
+    // The list page also fires an independent, unconditional
+    // productCategoryKeys query for the category filter dropdown — mock it
+    // too (200, empty), or it falls through to the real network. Discovered
+    // in Phase 22.5: with a real backend actually reachable, that unmocked
+    // request gets a genuine 401 (not a connection error), which triggers
+    // the app's real refresh-then-clear-tokens logic and logs the mocked
+    // session out entirely — a latent gap in this test that a
+    // connection-refused environment (no real backend) had been masking.
+    await page.route('**/api/v1/products/categories*', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ content: [], totalElements: 0, totalPages: 0, number: 0, size: 100, first: true, last: true, empty: true }),
+      }),
+    )
     await page.route('**/api/v1/products*', (route) =>
       route.fulfill({
         status: 500,

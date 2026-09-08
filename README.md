@@ -150,6 +150,10 @@ cp .env.example .env
 
 See [.env.example](.env.example) for the full list of supported variables (database, JWT, AI provider/API key, Redis, Kafka, storage, CORS, application URL). As of Phase 4, the backend reads `SERVER_PORT`, `SPRING_PROFILES_ACTIVE`, the database variables (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`), and the JWT variables (`JWT_SECRET`, `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES`, `JWT_REFRESH_TOKEN_EXPIRATION_DAYS`). `DB_PASSWORD` and `JWT_SECRET` have no defaults — the app fails fast at startup without them (`JWT_SECRET` must additionally be at least 32 bytes for HS256 signing). The rest become relevant in later phases.
 
+**`CORS_ALLOWED_ORIGINS`** (Phase 22.5): a comma-separated allow-list of origins the browser is permitted to call the API from cross-origin, defaulting to `http://localhost:5173` (the frontend's own default dev port). Before Phase 22.5 no CORS configuration existed at all — every real browser request from a separately-served frontend was silently blocked at the preflight; see `SecurityConfig`'s Javadoc and [docs/roadmap.md](docs/roadmap.md#phase-225--completed-scope). If your frontend runs on a different port/host, set this explicitly.
+
+**`DB_HOST_PORT`** (Phase 22.5, `docker-compose.yml` only): the *host-side* published port for the `postgres` service, defaulting to `5432`. The container's own internal port always stays `5432` regardless. Override this if `5432` is already taken by another Postgres install on your machine (a host-machine conflict, not a BizPilot AI issue) — remember to also set `DB_PORT` to the same value for a natively-run (non-Docker) backend to connect to it.
+
 ## Running the Backend
 
 The backend needs a running PostgreSQL to start (Flyway migrations run on startup). Start it via Docker, then run the backend natively:
@@ -516,6 +520,12 @@ npm run test:e2e:report   # open the last HTML report
 
 `npm run test:e2e` starts the Vite dev server itself (Playwright's `webServer` config), waits until it's reachable, launches Chromium, runs the smoke suite (`frontend/e2e/`), captures screenshots at the required breakpoints into `test-results/screenshots/` (gitignored), generates an HTML report (`playwright-report/`, gitignored), and shuts the dev server down automatically — no manual browser or backend setup needed. Every test mocks the backend entirely at the browser network layer (`page.route`, see `e2e/mocks.ts`) with realistic fixtures for all seven analytics metrics; a real backend is never required for this suite, and no production/API code is touched by the mocks. This is a lightweight foundation-verification layer (auth, dashboard, navigation, responsive, basic accessibility) — the full Phase 26 E2E strategy (complete Customer/Lead/Quotation/Invoice/Document/AI flows, a role matrix, performance, visual regression) is a separate, later scope.
 
+**`e2e/local-integration.spec.ts`** (Phase 22.5) is the one exception: it mocks nothing at all and exercises the real stack (real Chromium → real Vite dev server → real Spring Boot → real PostgreSQL) against the [Local Demo Data](#local-demo-data-phase-225) seeded above. It is excluded from the default `npm run test:e2e` (via `testIgnore` in `playwright.config.ts`) so a routine/CI run never depends on an unavailable local database — run it explicitly, once PostgreSQL, the backend (with demo users seeded), and the frontend are all already running and pointed at each other:
+
+```bash
+npm run test:e2e:local
+```
+
 ## Running with Docker
 
 `docker-compose.yml` provides local infrastructure (PostgreSQL/PGVector, Redis, Kafka) plus the backend service (built from `backend/Dockerfile`). Uploaded documents (Phase 13) are persisted in a named `document_storage` volume mounted at `/app/uploads` inside the backend container, so they survive a container restart; no MinIO/S3 service is included. The frontend service remains a placeholder until Phase 20:
@@ -524,6 +534,81 @@ npm run test:e2e:report   # open the last HTML report
 cp .env.example .env   # at minimum set DB_PASSWORD and JWT_SECRET
 docker compose up -d --build
 curl http://localhost:8080/actuator/health
+```
+
+## Local Demo Data (Phase 22.5)
+
+For local development/demos, BizPilot AI can seed one demo organization, one user per role, and a realistic set of synthetic Customers/Leads/Products/Quotations — entirely through the real backend/database, never faked in the frontend.
+
+### 1. Set the required environment variables
+
+`docker-compose.yml` requires `DB_PASSWORD` to be set in your shell **before** you run it (Compose reads it directly, not just the backend) — export it, along with `JWT_SECRET`, first, in the same terminal session you'll use for the next two steps:
+
+```bash
+export DB_PASSWORD=changeme
+export JWT_SECRET=$(openssl rand -base64 48)
+```
+
+### 2. Start PostgreSQL
+
+```bash
+docker compose up -d postgres
+```
+
+If you instead see `error while interpolating services.postgres.environment.POSTGRES_PASSWORD: required variable DB_PASSWORD is missing a value`, it means step 1 wasn't run in this same shell session (or you opened a new terminal) — re-export `DB_PASSWORD` and try again. (Alternatively, `cp .env.example .env` and set it there once — Compose reads a `.env` file in the same directory automatically, so you won't need to `export` it every session.)
+
+### 3. Start the backend with demo-user seeding enabled
+
+The demo **organization + 5 role accounts** (one each for OWNER/ADMIN/MANAGER/SALES/EMPLOYEE) are created by a dedicated, local-only Spring component (`backend/src/main/java/com/bizpilot/devseed/DemoUsersSeeder.java`) — gated by the `local` profile **and** an explicit opt-in flag, so it never runs by accident (not even under a plain `./mvnw spring-boot:run`, and never in `test`/production):
+
+```bash
+cd backend
+BIZPILOT_SEED_DEMO_USERS=true DB_PASSWORD=$DB_PASSWORD JWT_SECRET=$JWT_SECRET ./mvnw spring-boot:run
+```
+
+Demo accounts (all local-only, password `Passw0rd1` for every one — **never real credentials, never committed**):
+
+```text
+owner@bizpilot.local
+admin@bizpilot.local
+manager@bizpilot.local
+sales@bizpilot.local
+employee@bizpilot.local
+```
+
+This step is **idempotent** — running it again (e.g. restarting the backend) recognizes the existing demo organization/users and creates nothing new.
+
+### 4. Seed Customers/Leads/Products/Quotations
+
+A separate, standalone script (`scripts/seed-demo-data.mjs`, plain Node — no new npm dependency) logs in as the demo OWNER and creates data through the **real public REST API** exactly as the frontend would, so every Quotation total is calculated by the backend, never fabricated:
+
+```bash
+node scripts/seed-demo-data.mjs
+```
+
+Creates (approximately): 12 Customers, 18 Leads (covering every status/source/priority), 5 Product Categories, 29 Products (a few deliberately `INACTIVE`), 13 Quotations (covering every status: DRAFT/SENT/ACCEPTED/REJECTED/EXPIRED/CANCELLED). Also idempotent — re-running it recognizes existing Customers/Leads/Categories/Products by name/SKU and skips the whole Quotations batch if any quotation already exists for the organization, so it never creates duplicates.
+
+If your backend isn't on the default port, point the script at it: `BIZPILOT_API_URL=http://localhost:8081 node scripts/seed-demo-data.mjs`.
+
+### 5. Start the frontend
+
+```bash
+cd frontend
+npm install
+npm run dev   # http://localhost:5173
+```
+
+Log in as any demo account above. The dashboard, Customers, Leads, Products, and Quotations pages should now show real, populated data.
+
+### Resetting local demo data
+
+There is no one-command reset (by design — this stays a thin script over the real API, not a second data-management surface). To start over: stop the backend, then `docker compose down -v` (removes the local Postgres volume — `docker compose down` doesn't take a per-service argument, so this drops the whole local stack's volumes; harmless here since Postgres is the only one actually used) and repeat steps 1–4.
+
+### Stopping everything
+
+```bash
+docker compose down   # stops Postgres (add -v to also delete its data volume)
+# Ctrl+C the backend and frontend dev processes
 ```
 
 ## Running Tests

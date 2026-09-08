@@ -16,6 +16,12 @@ import { defineConfig, devices } from '@playwright/test'
  */
 export default defineConfig({
   testDir: './e2e',
+  // Phase 22.5: e2e/local-integration.spec.ts deliberately mocks nothing —
+  // it requires a real Postgres + backend (with demo users seeded) already
+  // running and reachable, which a routine `npm run test:e2e` must never
+  // assume (this stays a mocked-backend-only default run). Run it
+  // explicitly instead: `npx playwright test e2e/local-integration.spec.ts`.
+  testIgnore: '**/local-integration.spec.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
