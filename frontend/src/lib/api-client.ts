@@ -171,3 +171,36 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
 
   return (await res.json()) as T
 }
+
+/**
+ * For binary responses (currently: quotation PDF download) — same
+ * auth/refresh/error handling as `apiFetch`, but resolves to a `Blob`
+ * instead of parsing JSON (a PDF response body is never valid JSON).
+ */
+export async function apiFetchBlob(path: string, isRetry = false): Promise<Blob> {
+  const tokens = currentTokens
+  const headers = new Headers()
+  if (tokens?.accessToken) {
+    headers.set('Authorization', `Bearer ${tokens.accessToken}`)
+  }
+
+  let res: Response
+  try {
+    res = await fetch(`${BASE_URL}${path}`, { headers })
+  } catch {
+    throw new NetworkError()
+  }
+
+  if (res.status === 401 && !isRetry && tokens) {
+    const newAccessToken = await refreshAccessToken()
+    if (newAccessToken) {
+      return apiFetchBlob(path, true)
+    }
+  }
+
+  if (!res.ok) {
+    throw await toApiError(res, path)
+  }
+
+  return res.blob()
+}

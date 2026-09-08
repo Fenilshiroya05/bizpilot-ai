@@ -145,6 +145,16 @@ export async function goToLeads(page: Page) {
   await page.waitForURL('**/leads')
 }
 
+export async function goToProducts(page: Page) {
+  await page.getByRole('complementary').getByRole('link', { name: 'Products' }).click()
+  await page.waitForURL('**/products')
+}
+
+export async function goToQuotations(page: Page) {
+  await page.getByRole('complementary').getByRole('link', { name: 'Quotations' }).click()
+  await page.waitForURL('**/quotations')
+}
+
 // ---------------------------------------------------------------------------
 // Phase 21 — Customers / Leads / AI Lead Scoring fixtures
 // ---------------------------------------------------------------------------
@@ -514,4 +524,347 @@ export async function mockLeadScoreFailure(page: Page, leadId: string) {
   await page.route(`**/api/v1/leads/${leadId}/score`, (route) =>
     json(route, 502, apiError(502, 'AI_PROVIDER_ERROR', 'The AI provider returned an error', `/api/v1/leads/${leadId}/score`)),
   )
+}
+
+// ---------------------------------------------------------------------------
+// Phase 22 — Products / Quotations fixtures
+// ---------------------------------------------------------------------------
+
+export const TEST_CATEGORY = {
+  id: 'e2e-category-1',
+  name: 'Hardware',
+  organizationId: TEST_USER.organizationId,
+  createdAt: '2026-01-01T00:00:00Z',
+  updatedAt: '2026-01-01T00:00:00Z',
+}
+
+export const TEST_PRODUCT = {
+  id: 'e2e-product-1',
+  sku: 'WID-001',
+  name: 'Steel Widget',
+  description: 'A durable steel widget.' as string | null,
+  unit: 'pcs',
+  price: 250,
+  taxPercentage: 18,
+  status: 'ACTIVE' as string,
+  categoryId: TEST_CATEGORY.id as string | null,
+  organizationId: TEST_USER.organizationId,
+  createdAt: '2026-01-01T00:00:00Z',
+  updatedAt: '2026-01-01T00:00:00Z',
+}
+
+/**
+ * A small, real, in-memory CRUD simulation behind `page.route` — same
+ * rationale as {@link mockCustomersResource}. Route registration order
+ * matters: the bare list/detail routes are registered first, then the
+ * `/categories` sub-resource routes are registered afterward so Playwright's
+ * last-registered-wins matching gives them priority over the generic
+ * `/products/*` detail pattern for that specific subpath.
+ */
+export async function mockProductsResource(
+  page: Page,
+  initialProducts: (typeof TEST_PRODUCT)[] = [TEST_PRODUCT],
+  initialCategories: (typeof TEST_CATEGORY)[] = [TEST_CATEGORY],
+) {
+  const products = initialProducts.map((p) => ({ ...p }))
+  const categories = initialCategories.map((c) => ({ ...c }))
+  let nextProductId = products.length + 1
+  let nextCategoryId = categories.length + 1
+
+  await page.route('**/api/v1/products*', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (request.method() === 'GET') {
+      const status = url.searchParams.get('status')
+      const categoryId = url.searchParams.get('categoryId')
+      const q = url.searchParams.get('q')?.toLowerCase()
+      let filtered = status ? products.filter((p) => p.status === status) : products
+      if (categoryId) filtered = filtered.filter((p) => p.categoryId === categoryId)
+      if (q) {
+        filtered = filtered.filter((p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q))
+      }
+      const page = Number(url.searchParams.get('page') ?? '0')
+      const size = Number(url.searchParams.get('size') ?? '20')
+      return json(route, 200, pageOf(filtered, page, size))
+    }
+    if (request.method() === 'POST') {
+      const body = (request.postDataJSON() ?? {}) as Record<string, string | undefined>
+      if (!body.sku || !body.name || !body.unit || !body.price) {
+        return json(route, 400, apiError(400, 'VALIDATION_ERROR', 'Missing required fields', url.pathname))
+      }
+      if (products.some((p) => p.sku === body.sku)) {
+        return json(route, 409, apiError(409, 'DUPLICATE_SKU', 'A product with this SKU already exists.', url.pathname))
+      }
+      const now = new Date().toISOString()
+      const created = {
+        id: `e2e-product-${nextProductId++}`,
+        sku: body.sku,
+        name: body.name,
+        description: body.description || null,
+        unit: body.unit,
+        price: Number(body.price),
+        taxPercentage: Number(body.taxPercentage || '0'),
+        status: 'ACTIVE',
+        categoryId: body.categoryId || null,
+        organizationId: TEST_USER.organizationId,
+        createdAt: now,
+        updatedAt: now,
+      }
+      products.push(created)
+      return json(route, 201, created)
+    }
+    return route.fallback()
+  })
+
+  await page.route('**/api/v1/products/*', async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    const id = pathname.split('/').pop()
+    const product = products.find((p) => p.id === id)
+    if (!product) return json(route, 404, apiError(404, 'PRODUCT_NOT_FOUND', 'Product not found', pathname))
+
+    if (request.method() === 'GET') return json(route, 200, product)
+    if (request.method() === 'PATCH') {
+      const body = (request.postDataJSON() ?? {}) as Record<string, unknown>
+      if (typeof body.sku === 'string' && products.some((p) => p.sku === body.sku && p.id !== product.id)) {
+        return json(route, 409, apiError(409, 'DUPLICATE_SKU', 'A product with this SKU already exists.', pathname))
+      }
+      for (const key of ['sku', 'name', 'description', 'unit', 'status'] as const) {
+        if (body[key] !== undefined) (product as Record<string, unknown>)[key] = body[key]
+      }
+      if (body.price !== undefined) product.price = Number(body.price)
+      if (body.taxPercentage !== undefined) product.taxPercentage = Number(body.taxPercentage)
+      if (body.clearCategory) product.categoryId = null
+      else if (typeof body.categoryId === 'string') product.categoryId = body.categoryId
+      product.updatedAt = new Date().toISOString()
+      return json(route, 200, product)
+    }
+    if (request.method() === 'DELETE') {
+      product.status = 'INACTIVE'
+      return route.fulfill({ status: 204 })
+    }
+    return route.fallback()
+  })
+
+  await page.route('**/api/v1/products/categories*', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (request.method() === 'GET') return json(route, 200, pageOf(categories, 0, 100))
+    if (request.method() === 'POST') {
+      const body = (request.postDataJSON() ?? {}) as { name?: string }
+      if (!body.name || body.name.trim() === '') {
+        return json(route, 400, apiError(400, 'VALIDATION_ERROR', 'name cannot be blank', url.pathname))
+      }
+      const now = new Date().toISOString()
+      const created = {
+        id: `e2e-category-${nextCategoryId++}`,
+        name: body.name,
+        organizationId: TEST_USER.organizationId,
+        createdAt: now,
+        updatedAt: now,
+      }
+      categories.push(created)
+      return json(route, 201, created)
+    }
+    return route.fallback()
+  })
+
+  await page.route('**/api/v1/products/categories/*', async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    const id = pathname.split('/').pop()
+    const category = categories.find((c) => c.id === id)
+    if (!category) return json(route, 404, apiError(404, 'CATEGORY_NOT_FOUND', 'Category not found', pathname))
+    if (request.method() === 'PATCH') {
+      const body = (request.postDataJSON() ?? {}) as { name?: string }
+      if (body.name) category.name = body.name
+      category.updatedAt = new Date().toISOString()
+      return json(route, 200, category)
+    }
+    return route.fallback()
+  })
+
+  return { products, categories }
+}
+
+/** Mirrors QuotationCalculator.java's rounding: line subtotal → per-line discount share → tax on the discounted amount. */
+function round4(value: number): number {
+  return Math.round(value * 10000) / 10000
+}
+
+function computeQuotationTotals(
+  items: { productId: string; quantity: number; unitPrice: number; taxPercentage: number; productNameSnapshot: string }[],
+  discountPercentage: number,
+) {
+  let subtotal = 0
+  let taxAmount = 0
+  const computedItems = items.map((item) => {
+    const lineSubtotal = round4(item.quantity * item.unitPrice)
+    const lineDiscount = round4((lineSubtotal * discountPercentage) / 100)
+    const lineTaxableAmount = lineSubtotal - lineDiscount
+    const lineTaxAmount = round4((lineTaxableAmount * item.taxPercentage) / 100)
+    subtotal += lineSubtotal
+    taxAmount += lineTaxAmount
+    return {
+      id: `item-${item.productId}-${Math.random().toString(36).slice(2, 8)}`,
+      productId: item.productId,
+      productNameSnapshot: item.productNameSnapshot,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      taxPercentage: item.taxPercentage,
+      lineSubtotal,
+      lineTaxAmount,
+    }
+  })
+  subtotal = round4(subtotal)
+  taxAmount = round4(taxAmount)
+  const discountAmount = round4((subtotal * discountPercentage) / 100)
+  const grandTotal = round4(subtotal - discountAmount + taxAmount)
+  return { items: computedItems, subtotal, discountAmount, taxAmount, grandTotal }
+}
+
+export const TEST_QUOTATION = {
+  id: 'e2e-quotation-1',
+  customerId: TEST_CUSTOMER.id,
+  status: 'DRAFT' as string,
+  validUntil: null as string | null,
+  discountPercentage: 0,
+}
+
+/**
+ * Simulates the Quotation CRUD + status-lifecycle contract. `products` is the
+ * same in-memory array returned by {@link mockProductsResource} — new
+ * quotation items snapshot each product's current name/price/tax at
+ * creation, exactly like the real backend does.
+ */
+export async function mockQuotationsResource(
+  page: Page,
+  products: (typeof TEST_PRODUCT)[],
+  initialQuotations: (typeof TEST_QUOTATION & { items?: { productId: string; quantity: number }[] })[] = [],
+) {
+  const quotations = initialQuotations.map((q) => {
+    const items = (q.items ?? []).map((i) => {
+      const product = products.find((p) => p.id === i.productId)!
+      return { productId: i.productId, quantity: i.quantity, unitPrice: product.price, taxPercentage: product.taxPercentage, productNameSnapshot: product.name }
+    })
+    const totals = computeQuotationTotals(items, q.discountPercentage)
+    const now = new Date().toISOString()
+    return {
+      id: q.id,
+      customerId: q.customerId,
+      status: q.status,
+      validUntil: q.validUntil,
+      discountPercentage: q.discountPercentage,
+      ...totals,
+      organizationId: TEST_USER.organizationId,
+      createdAt: now,
+      updatedAt: now,
+    }
+  })
+  let nextId = quotations.length + 1
+
+  function buildItems(rawItems: { productId: string; quantity: string }[]) {
+    return rawItems.map((i) => {
+      const product = products.find((p) => p.id === i.productId)
+      if (!product) throw new Error(`Unknown product id in mock: ${i.productId}`)
+      return {
+        productId: i.productId,
+        quantity: Number(i.quantity),
+        unitPrice: product.price,
+        taxPercentage: product.taxPercentage,
+        productNameSnapshot: product.name,
+      }
+    })
+  }
+
+  await page.route('**/api/v1/quotations*', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (request.method() === 'GET') {
+      const status = url.searchParams.get('status')
+      const customerId = url.searchParams.get('customerId')
+      const validUntilBefore = url.searchParams.get('validUntilBefore')
+      let filtered = status ? quotations.filter((q) => q.status === status) : quotations
+      if (customerId) filtered = filtered.filter((q) => q.customerId === customerId)
+      if (validUntilBefore) filtered = filtered.filter((q) => q.validUntil && q.validUntil <= validUntilBefore)
+      const page = Number(url.searchParams.get('page') ?? '0')
+      const size = Number(url.searchParams.get('size') ?? '20')
+      // The list endpoint returns QuotationSummaryResponse (no `items`).
+      const summaries = filtered.map(({ items: _items, ...summary }) => summary)
+      return json(route, 200, pageOf(summaries, page, size))
+    }
+    if (request.method() === 'POST') {
+      const body = (request.postDataJSON() ?? {}) as {
+        customerId: string
+        validUntil?: string
+        discountPercentage?: string
+        items: { productId: string; quantity: string }[]
+      }
+      if (!body.customerId || !body.items || body.items.length === 0) {
+        return json(route, 400, apiError(400, 'VALIDATION_ERROR', 'customerId and items are required', url.pathname))
+      }
+      const discountPercentage = Number(body.discountPercentage || '0')
+      const totals = computeQuotationTotals(buildItems(body.items), discountPercentage)
+      const now = new Date().toISOString()
+      const created = {
+        id: `e2e-quotation-${nextId++}`,
+        customerId: body.customerId,
+        status: 'DRAFT',
+        validUntil: body.validUntil || null,
+        discountPercentage,
+        ...totals,
+        organizationId: TEST_USER.organizationId,
+        createdAt: now,
+        updatedAt: now,
+      }
+      quotations.push(created)
+      return json(route, 201, created)
+    }
+    return route.fallback()
+  })
+
+  await page.route('**/api/v1/quotations/*/pdf', async (route) => {
+    return route.fulfill({ status: 200, contentType: 'application/pdf', body: Buffer.from('%PDF-1.4 mock quotation pdf') })
+  })
+
+  await page.route('**/api/v1/quotations/*', async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    const id = pathname.split('/').pop()
+    const quotation = quotations.find((q) => q.id === id)
+    if (!quotation) return json(route, 404, apiError(404, 'QUOTATION_NOT_FOUND', 'Quotation not found', pathname))
+
+    if (request.method() === 'GET') return json(route, 200, quotation)
+    if (request.method() === 'PATCH') {
+      if (quotation.status !== 'DRAFT') {
+        return json(route, 409, apiError(409, 'QUOTATION_NOT_EDITABLE', 'Only draft quotations can be edited.', pathname))
+      }
+      const body = (request.postDataJSON() ?? {}) as {
+        customerId?: string
+        validUntil?: string
+        clearValidUntil?: boolean
+        discountPercentage?: string
+        status?: string
+        items?: { productId: string; quantity: string }[]
+      }
+      if (body.customerId) quotation.customerId = body.customerId
+      if (body.clearValidUntil) quotation.validUntil = null
+      else if (body.validUntil) quotation.validUntil = body.validUntil
+      const discountPercentage = body.discountPercentage !== undefined ? Number(body.discountPercentage) : quotation.discountPercentage
+      const items = body.items ? buildItems(body.items) : quotation.items
+      const totals = computeQuotationTotals(items, discountPercentage)
+      quotation.discountPercentage = discountPercentage
+      Object.assign(quotation, totals)
+      if (body.status) quotation.status = body.status
+      quotation.updatedAt = new Date().toISOString()
+      return json(route, 200, quotation)
+    }
+    if (request.method() === 'DELETE') {
+      quotation.status = 'CANCELLED'
+      return route.fulfill({ status: 204 })
+    }
+    return route.fallback()
+  })
+
+  return { quotations }
 }

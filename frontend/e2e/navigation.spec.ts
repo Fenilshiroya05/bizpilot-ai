@@ -2,13 +2,12 @@ import { expect, test } from '@playwright/test'
 
 import { loginViaUi, mockAuthenticatedSession, mockLoginSuccess, TEST_ANALYTICS } from './mocks'
 
-// Customers and Leads are deliberately absent here — Phase 21 replaced
-// those two ComingSoon placeholders with real pages (see customers.spec.ts
-// and leads.spec.ts, which now cover them in full). Only the modules still
-// unimplemented remain ComingSoon.
+// Customers, Leads, Products, and Quotations are deliberately absent here —
+// Phase 21 (Customers/Leads) and Phase 22 (Products/Quotations) replaced
+// those ComingSoon placeholders with real pages (see customers.spec.ts,
+// leads.spec.ts, products.spec.ts, quotations.spec.ts). Only the modules
+// still unimplemented remain ComingSoon.
 const COMING_SOON_ROUTES: Array<{ label: string; title: string; phase: string }> = [
-  { label: 'Products', title: 'Products', phase: 'Phase 22' },
-  { label: 'Quotations', title: 'Quotations', phase: 'Phase 22' },
   { label: 'Invoices', title: 'Invoices', phase: 'Phase 23' },
   { label: 'Tasks', title: 'Tasks', phase: 'Phase 23' },
   { label: 'Documents', title: 'Documents', phase: 'Phase 24' },

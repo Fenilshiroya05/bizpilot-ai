@@ -3,13 +3,18 @@ import { expect, test } from '@playwright/test'
 import {
   goToCustomers,
   goToLeads,
+  goToProducts,
+  goToQuotations,
   loginViaUi,
   mockAuthenticatedSession,
   mockCustomersResource,
   mockLeadsResource,
   mockLeadScoreSuccess,
+  mockProductsResource,
+  mockQuotationsResource,
   TEST_CUSTOMER,
   TEST_LEAD,
+  TEST_PRODUCT,
 } from './mocks'
 import { attachConsoleGuard, horizontalOverflowPx } from './sanity'
 
@@ -216,6 +221,95 @@ test.describe('responsive — customers and leads (Phase 21)', () => {
       await page.setViewportSize({ width, height })
       expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
       await page.screenshot({ path: `test-results/screenshots/lead-detail-ai-score-${width}x${height}.png`, fullPage: true })
+    }
+  })
+})
+
+test.describe('responsive — products and quotations (Phase 22)', () => {
+  test('products list: table on desktop, cards on mobile, no horizontal overflow, screenshots', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await mockProductsResource(page, [TEST_PRODUCT])
+    await loginViaUi(page)
+    await goToProducts(page)
+
+    for (const { width, height } of [...DESKTOP_BREAKPOINTS, ...MOBILE_BREAKPOINTS]) {
+      await page.setViewportSize({ width, height })
+      await expect(page.getByRole('heading', { name: 'Products' })).toBeVisible()
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/products-list-${width}x${height}.png`, fullPage: true })
+    }
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect(page.getByRole('table')).not.toBeVisible()
+    await expect(page.getByRole('link', { name: TEST_PRODUCT.sku })).toBeVisible()
+  })
+
+  test('product detail: single column on mobile, no horizontal overflow, screenshots', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await mockProductsResource(page, [TEST_PRODUCT])
+    await loginViaUi(page)
+    await goToProducts(page)
+    await page.getByRole('table').getByRole('link', { name: TEST_PRODUCT.sku }).click()
+    await expect(page.getByRole('heading', { name: TEST_PRODUCT.name })).toBeVisible()
+
+    for (const { width, height } of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize({ width, height })
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/product-detail-${width}x${height}.png`, fullPage: true })
+    }
+  })
+
+  test('quotations list: table on desktop, cards on mobile, no horizontal overflow, screenshots', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await mockCustomersResource(page, [TEST_CUSTOMER])
+    const { products } = await mockProductsResource(page, [TEST_PRODUCT])
+    await mockQuotationsResource(page, products, [
+      { id: 'e2e-quotation-1', customerId: TEST_CUSTOMER.id, status: 'DRAFT', validUntil: null, discountPercentage: 0, items: [{ productId: TEST_PRODUCT.id, quantity: 1 }] },
+    ])
+    await loginViaUi(page)
+    await goToQuotations(page)
+
+    for (const { width, height } of [...DESKTOP_BREAKPOINTS, ...MOBILE_BREAKPOINTS]) {
+      await page.setViewportSize({ width, height })
+      await expect(page.getByRole('heading', { name: 'Quotations' })).toBeVisible()
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/quotations-list-${width}x${height}.png`, fullPage: true })
+    }
+  })
+
+  test('quotation detail: single column on mobile, no horizontal overflow, screenshots', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await mockCustomersResource(page, [TEST_CUSTOMER])
+    const { products } = await mockProductsResource(page, [TEST_PRODUCT])
+    await mockQuotationsResource(page, products, [
+      { id: 'e2e-quotation-1', customerId: TEST_CUSTOMER.id, status: 'DRAFT', validUntil: null, discountPercentage: 0, items: [{ productId: TEST_PRODUCT.id, quantity: 1 }] },
+    ])
+    await loginViaUi(page)
+    await goToQuotations(page)
+    await page.getByRole('table').getByRole('link', { name: 'e2e-quot' }).click()
+    await expect(page.getByRole('heading', { name: `Quotation for ${TEST_CUSTOMER.name}` })).toBeVisible()
+
+    for (const { width, height } of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize({ width, height })
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/quotation-detail-${width}x${height}.png`, fullPage: true })
+    }
+  })
+
+  test('quotation create form: responsive layout, no horizontal overflow, screenshots', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await mockCustomersResource(page, [TEST_CUSTOMER])
+    const { products } = await mockProductsResource(page, [TEST_PRODUCT])
+    await mockQuotationsResource(page, products, [])
+    await loginViaUi(page)
+    await goToQuotations(page)
+    await page.getByRole('button', { name: 'Create quotation' }).click()
+    await expect(page.getByRole('heading', { name: 'New quotation' })).toBeVisible()
+
+    for (const { width, height } of [...DESKTOP_BREAKPOINTS, ...MOBILE_BREAKPOINTS]) {
+      await page.setViewportSize({ width, height })
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/quotation-form-${width}x${height}.png`, fullPage: true })
     }
   })
 })

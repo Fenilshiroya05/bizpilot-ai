@@ -252,3 +252,163 @@ export interface LeadScoreResponse {
   recommendedAction: string
   generatedAt: string
 }
+
+// ---- products/entity/ProductStatus.java ----
+export type ProductStatus = 'ACTIVE' | 'INACTIVE'
+
+// ---- products/dto/ProductResponse.java ----
+// Response decimal fields are plain JSON numbers (same Jackson BigDecimal
+// convention as every other response in this app — see AnalyticsSummaryResponse's
+// note above). Request decimal fields below are deliberately typed `string`
+// instead: Jackson's BigDecimal deserializer accepts a JSON string value
+// directly and parses it exactly, so submitting the validated string the
+// user typed (never `Number(string)` first) means zero JS floating-point
+// round-trip for anything actually sent to the backend.
+export interface ProductResponse {
+  id: string
+  sku: string
+  name: string
+  description: string | null
+  unit: string
+  price: number
+  taxPercentage: number
+  status: ProductStatus
+  categoryId: string | null
+  organizationId: string
+  createdAt: string
+  updatedAt: string
+}
+
+// ---- products/dto/ProductCreateRequest.java ----
+export interface ProductCreateRequest {
+  sku: string
+  name: string
+  description?: string
+  unit: string
+  price: string
+  taxPercentage?: string
+  categoryId?: string
+}
+
+// ---- products/dto/ProductUpdateRequest.java (PATCH: omitted/undefined = unchanged) ----
+export interface ProductUpdateRequest {
+  sku?: string
+  name?: string
+  description?: string
+  unit?: string
+  price?: string
+  taxPercentage?: string
+  status?: ProductStatus
+  categoryId?: string
+  clearCategory?: boolean
+}
+
+export interface ProductListParams {
+  q?: string
+  status?: ProductStatus
+  categoryId?: string
+  unit?: string
+  page?: number
+  size?: number
+  sort?: string
+}
+
+// ---- products/dto/ProductCategoryResponse.java ----
+export interface ProductCategoryResponse {
+  id: string
+  name: string
+  organizationId: string
+  createdAt: string
+  updatedAt: string
+}
+
+// ---- products/dto/ProductCategoryCreateRequest.java ----
+export interface ProductCategoryCreateRequest {
+  name: string
+}
+
+// ---- products/dto/ProductCategoryUpdateRequest.java ----
+export interface ProductCategoryUpdateRequest {
+  name?: string
+}
+
+// ---- sales/entity/QuotationStatus.java ----
+export type QuotationStatus = 'DRAFT' | 'SENT' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'CANCELLED'
+
+// ---- sales/dto/QuotationItemResponse.java ----
+export interface QuotationItemResponse {
+  id: string
+  productId: string
+  productNameSnapshot: string
+  quantity: number
+  unitPrice: number
+  taxPercentage: number
+  lineSubtotal: number
+  lineTaxAmount: number
+}
+
+// ---- sales/dto/QuotationResponse.java ----
+export interface QuotationResponse {
+  id: string
+  customerId: string
+  status: QuotationStatus
+  validUntil: string | null
+  discountPercentage: number
+  subtotal: number
+  discountAmount: number
+  taxAmount: number
+  grandTotal: number
+  items: QuotationItemResponse[]
+  organizationId: string
+  createdAt: string
+  updatedAt: string
+}
+
+// ---- sales/dto/QuotationSummaryResponse.java (list endpoint — no items) ----
+export interface QuotationSummaryResponse {
+  id: string
+  customerId: string
+  status: QuotationStatus
+  validUntil: string | null
+  discountPercentage: number
+  subtotal: number
+  discountAmount: number
+  taxAmount: number
+  grandTotal: number
+  organizationId: string
+  createdAt: string
+  updatedAt: string
+}
+
+// ---- sales/dto/QuotationItemRequest.java ----
+export interface QuotationItemRequest {
+  productId: string
+  quantity: string
+}
+
+// ---- sales/dto/QuotationCreateRequest.java ----
+export interface QuotationCreateRequest {
+  customerId: string
+  validUntil?: string
+  discountPercentage?: string
+  items: QuotationItemRequest[]
+}
+
+// ---- sales/dto/QuotationUpdateRequest.java (PATCH: omitted/undefined = unchanged) ----
+export interface QuotationUpdateRequest {
+  customerId?: string
+  validUntil?: string
+  clearValidUntil?: boolean
+  discountPercentage?: string
+  status?: QuotationStatus
+  items?: QuotationItemRequest[]
+}
+
+export interface QuotationListParams {
+  status?: QuotationStatus
+  customerId?: string
+  validUntilBefore?: string
+  page?: number
+  size?: number
+  sort?: string
+}

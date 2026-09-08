@@ -31,6 +31,21 @@ const LeadsListPage = lazy(() =>
 const LeadDetailPage = lazy(() =>
   import('@/features/leads/LeadDetailPage').then((m) => ({ default: m.LeadDetailPage })),
 )
+const ProductsListPage = lazy(() =>
+  import('@/features/products/ProductsListPage').then((m) => ({ default: m.ProductsListPage })),
+)
+const ProductDetailPage = lazy(() =>
+  import('@/features/products/ProductDetailPage').then((m) => ({ default: m.ProductDetailPage })),
+)
+const QuotationsListPage = lazy(() =>
+  import('@/features/quotations/QuotationsListPage').then((m) => ({ default: m.QuotationsListPage })),
+)
+const QuotationDetailPage = lazy(() =>
+  import('@/features/quotations/QuotationDetailPage').then((m) => ({ default: m.QuotationDetailPage })),
+)
+const QuotationFormPage = lazy(() =>
+  import('@/features/quotations/QuotationFormPage').then((m) => ({ default: m.QuotationFormPage })),
+)
 
 function PageFallback() {
   return (
@@ -97,7 +112,15 @@ export const router = createBrowserRouter([
             path: '/products',
             element: (
               <RequirePermission permission="PRODUCT_READ">
-                <ComingSoon title="Products" phase="Phase 22" />
+                {withSuspense(<ProductsListPage />)}
+              </RequirePermission>
+            ),
+          },
+          {
+            path: '/products/:id',
+            element: (
+              <RequirePermission permission="PRODUCT_READ">
+                {withSuspense(<ProductDetailPage />)}
               </RequirePermission>
             ),
           },
@@ -105,7 +128,23 @@ export const router = createBrowserRouter([
             path: '/quotations',
             element: (
               <RequirePermission permission="QUOTATION_READ">
-                <ComingSoon title="Quotations" phase="Phase 22" />
+                {withSuspense(<QuotationsListPage />)}
+              </RequirePermission>
+            ),
+          },
+          {
+            path: '/quotations/new',
+            element: (
+              <RequirePermission permission="QUOTATION_CREATE">
+                {withSuspense(<QuotationFormPage />)}
+              </RequirePermission>
+            ),
+          },
+          {
+            path: '/quotations/:id',
+            element: (
+              <RequirePermission permission="QUOTATION_READ">
+                {withSuspense(<QuotationDetailPage />)}
               </RequirePermission>
             ),
           },
