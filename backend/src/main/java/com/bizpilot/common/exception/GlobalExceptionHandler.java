@@ -2,6 +2,7 @@ package com.bizpilot.common.exception;
 
 import com.bizpilot.ai.exception.AiDisabledException;
 import com.bizpilot.ai.exception.AiProviderException;
+import com.bizpilot.ai.exception.LeadScoringValidationException;
 import com.bizpilot.common.response.ApiError;
 import com.bizpilot.crm.exception.CustomerArchivedException;
 import com.bizpilot.crm.exception.CustomerNotFoundException;
@@ -551,6 +552,24 @@ public class GlobalExceptionHandler {
                 HttpStatus.BAD_GATEWAY.value(),
                 "AI_PROVIDER_ERROR",
                 "The AI assistant is temporarily unavailable",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(body);
+    }
+
+    @ExceptionHandler(LeadScoringValidationException.class)
+    public ResponseEntity<ApiError> handleLeadScoringValidation(LeadScoringValidationException ex,
+                                                                  HttpServletRequest request) {
+        // Never pass ex.getMessage() through — it may echo back the model's
+        // raw (invalid) field values; mirrors AiProviderException/
+        // DocumentStorageException's handling above. Logged server-side
+        // only for diagnosis.
+        log.error("AI lead scoring output failed validation while processing request {}", request.getRequestURI(),
+                ex);
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_GATEWAY.value(),
+                "AI_SCORING_FAILED",
+                "The AI assistant could not generate a valid scoring assessment for this lead",
                 request.getRequestURI()
         );
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(body);

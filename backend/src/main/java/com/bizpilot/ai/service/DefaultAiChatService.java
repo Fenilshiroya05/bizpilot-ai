@@ -116,6 +116,53 @@ public class DefaultAiChatService implements AiChatService {
     }
 
     /**
+     * Phase 18 addition — deliberately its own method body again, for the
+     * same reason each prior overload is separate: {@code .entity(Class)}
+     * is the only difference from {@link #chat(String, String)}, verified
+     * against the actual Spring AI 1.1.8 {@code ChatClient.CallResponseSpec}/
+     * {@code DefaultChatClient} bytecode. Two things were specifically
+     * confirmed there, not assumed: (1) {@code entity(Class)} automatically
+     * attaches the target type's JSON schema to the request as a format
+     * instruction before the model is called — no manual schema string
+     * needs to be embedded in the prompt; (2) each terminal method on
+     * {@code CallResponseSpec} (e.g. {@code chatResponse()}, {@code
+     * entity(Class)}) independently re-executes the request when invoked —
+     * they are not cached views of one call — which is why this method
+     * calls only {@code .entity(...)} and never also {@code .chatResponse()}
+     * (doing both would silently double the provider call/cost per request).
+     * That is also why {@link #logStructuredOutcome} logs only duration and
+     * success/failure, never model/token usage (unlike {@link #logOutcome}) —
+     * that metadata isn't available here without a second, wasted call.
+     */
+    @Override
+    public <T> T chatForStructuredOutput(String systemPrompt, String userMessage, Class<T> responseType) {
+        Instant start = Instant.now();
+        try {
+            T result = chatClient.prompt()
+                    .system(systemPrompt)
+                    .user(userMessage)
+                    .call()
+                    .entity(responseType);
+            logStructuredOutcome(true, start, null);
+            return result;
+        } catch (RuntimeException e) {
+            logStructuredOutcome(false, start, e);
+            throw new AiProviderException("AI structured output request failed", e);
+        }
+    }
+
+    private void logStructuredOutcome(boolean success, Instant start, Exception error) {
+        long durationMs = Duration.between(start, Instant.now()).toMillis();
+        if (success) {
+            log.info("AI structured-output request succeeded [provider={}, durationMs={}]",
+                    aiProperties.provider(), durationMs);
+        } else {
+            log.error("AI structured-output request failed [provider={}, durationMs={}, errorType={}]",
+                    aiProperties.provider(), durationMs, error.getClass().getSimpleName(), error);
+        }
+    }
+
+    /**
      * Logs only safe metadata (project instructions §12) — provider, model
      * (read back from the response itself, never a provider-specific config
      * property, so this stays provider-agnostic), duration, success/failure,

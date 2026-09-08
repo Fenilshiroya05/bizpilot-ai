@@ -447,6 +447,26 @@ curl -s -X POST http://localhost:8080/api/v1/ai/chat \
 - **Fixed at 5 results per search tool**, never client/model-configurable. Free-text queries are length-bounded; IDs are validated as UUIDs.
 - See [docs/ai-architecture.md](docs/ai-architecture.md) §0/§4 for exactly which tools exist today versus what remains planned.
 
+### AI Lead Scoring (Phase 18)
+
+Phase 18 adds a new, direct endpoint — `POST /api/v1/leads/{id}/score` — that produces an AI-generated scoring assessment for one existing lead: a score (0–100), a suggested priority, reasoning, and a recommended next action. This is the first *structured* (non-prose) AI capability in BizPilot — it is a separate endpoint from `/api/v1/ai/chat` and is not exposed as a chat tool.
+
+```bash
+# Requires LEAD_READ and AI_USE, plus the same AI_* variables as Phase 15/16/17.
+curl -s -X POST http://localhost:8080/api/v1/leads/$LEAD_ID/score \
+  -H "Authorization: Bearer $TOKEN"
+
+# {"leadId": "...", "score": 78, "priority": "HIGH",
+#  "reasoning": "...", "recommendedAction": "...", "generatedAt": "..."}
+```
+
+- **Advisory only, never persisted.** The response exists only in this HTTP call — nothing is written to any table, and `priority` here is the AI's *suggestion*, never the lead's actual, authoritative `priority` field. Live-verified: scoring a lead never changes any of its stored fields.
+- **Requires both `LEAD_READ` and `AI_USE`** — neither permission alone is sufficient, matching Phase 17's precedent.
+- **Built only from the lead's own existing data** — its fields plus its 5 most recent notes/activities (bounded and truncated) — never RAG, never another lead, never cross-organization data.
+- **AI output is validated, never silently repaired.** An out-of-range score or an unrecognized priority value from the model is rejected outright (`502`/`AI_SCORING_FAILED`), never clamped or defaulted into something that merely looks valid.
+- **No conversation/history** — a fresh assessment is generated on every call; nothing about a previous scoring request is remembered.
+- See [docs/ai-architecture.md](docs/ai-architecture.md) §0/§6 and [docs/security.md](docs/security.md) §3p for the full account.
+
 ## Running the Frontend
 
 Not yet available. Will be documented starting in Phase 20 once the Vite project is scaffolded (`cd frontend && npm install && npm run dev`).

@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 17 — `POST /api/v1/ai/chat` now also supports read-only business-data tool calling: four `@PreAuthorize`-gated tools (`CustomerTools`, `LeadTools`, `ProductTools`, `InvoiceTools`) let the assistant look up customers, leads, products, and outstanding invoices, each through the existing domain service layer. Still stateless, still no mutating actions, no conversation persistence. Remaining business modules (`analytics`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 18 — a new `POST /api/v1/leads/{id}/score` endpoint (on the existing `LeadController`, not a new `ai`-module endpoint) produces an advisory, AI-generated lead scoring assessment using Spring AI's structured output — the first non-prose AI capability in this codebase. Never persisted, never written back to the lead. Still stateless, still no mutating actions, no conversation persistence. Remaining business modules (`analytics`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -153,6 +153,16 @@
 - **No new REST endpoint** — the existing `POST /api/v1/ai/chat` is unchanged at the HTTP layer; tools are only reachable through it. **No new migration** (Flyway remains at `V12`), **no new RBAC permission**, **no new Maven dependency**.
 - Full detail is in [security.md](security.md) §3o and [ai-architecture.md](ai-architecture.md) §4/§0.
 
+## 1q. AI Lead Scoring (Phase 18)
+
+- **`ai` module gains `scoring/{LeadScoringService, LeadScoringContextBuilder, LeadScoringPromptService, dto/{LeadScoreAiOutput, LeadScoreResponse}}`**, plus a new `exception/LeadScoringValidationException`. `AiChatService` gains a third new overload, `chatForStructuredOutput(String systemPrompt, String userMessage, Class<T> responseType)` — again a separate method body, not a refactor of the three existing overloads — built on Spring AI's `ChatClient.CallResponseSpec.entity(Class)` structured output (verified against actual 1.1.8 bytecode, not assumed from general docs).
+- **`LeadScoringService` is a thin translation layer over the existing `LeadService`** — fetches the lead and its 5 most recent activities/notes via `LeadService.getById`/`getHistory` (unmodified, tenant-scoped), never `LeadRepository` directly; contains no call to any save/update method. `LeadScoringContextBuilder` is a pure, deterministic string builder (no AI logic, no database access) that turns the fetched data into a bounded, delimited user-message context.
+- **Endpoint**: `POST /api/v1/leads/{id}/score` — deliberately on the existing `LeadController` (a lead-resource action, mirroring its existing `/{id}/assign`/`/{id}/notes` sub-resource endpoints), not a new `ai`-module endpoint, and not reachable through `POST /api/v1/ai/chat`. Requires both `LEAD_READ` and `AI_USE`.
+- **AI output is untrusted and validated explicitly** — `LeadScoreAiOutput` (the raw structured-output target) declares every field as unvalidated/nullable; `LeadScoringService` checks score range, exact `LeadPriority` match, and bounded non-blank text before ever constructing the client-facing `LeadScoreResponse`. Any failure raises the new `LeadScoringValidationException` (`502`/`AI_SCORING_FAILED`) — never silently repaired.
+- **Advisory only, verified live, not just by code inspection.** The response is never persisted and never written back to the `Lead` entity; a database-backed regression test reloads the lead after scoring and asserts every field, especially `priority`, is byte-for-byte unchanged.
+- **No new REST endpoint beyond the one above, no new migration** (Flyway remains at `V12`), **no new RBAC permission** (reuses `LEAD_READ`/`AI_USE`), **no new Maven dependency**, **no change to** `POST /api/v1/ai/chat`, `DefaultAiAssistantService`, or the four Phase 17 tool classes.
+- Full detail is in [security.md](security.md) §3p and [ai-architecture.md](ai-architecture.md) §6/§0.
+
 ## 1. Style
 
 BizPilot AI is built as a **modular monolith** on the backend, not a microservices system. Business capabilities are separated into clearly bounded Java packages (modules) inside a single Spring Boot application. This gives most of the maintainability benefits of modular design (clear boundaries, independent evolution, testability) without the operational overhead of distributed systems, which is not justified at this stage.
@@ -204,7 +214,7 @@ Each module owns its own controller/service/repository/entity/dto/mapper/excepti
 | `sales` | Leads ✅ (Phase 8), quotations ✅ (Phase 10), invoices, sales pipeline |
 | `products` | Product catalog, categories ✅ (Phase 9) |
 | `documents` | Document upload, metadata, local storage abstraction ✅ (Phase 13); extraction/chunking/async processing pipeline ✅ (Phase 15) |
-| `ai` | Spring AI integration: chat ✅/embeddings ✅ foundation (Phase 14); PGVector storage + tenant-safe retrieval ✅ (Phase 15); RAG assistant chat ✅ (Phase 16); read-only business-data tool calling ✅ (Phase 17); mutating tools, conversation memory deferred |
+| `ai` | Spring AI integration: chat ✅/embeddings ✅ foundation (Phase 14); PGVector storage + tenant-safe retrieval ✅ (Phase 15); RAG assistant chat ✅ (Phase 16); read-only business-data tool calling ✅ (Phase 17); structured-output AI lead scoring ✅ (Phase 18); mutating tools, conversation memory deferred |
 | `analytics` | Dashboards, aggregated reporting |
 | `tasks` | Task management ✅ (Phase 12) |
 | `notifications` | Notification delivery |

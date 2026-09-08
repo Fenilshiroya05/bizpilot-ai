@@ -1,5 +1,7 @@
 package com.bizpilot.sales.controller;
 
+import com.bizpilot.ai.scoring.LeadScoringService;
+import com.bizpilot.ai.scoring.dto.LeadScoreResponse;
 import com.bizpilot.sales.dto.LeadActivityResponse;
 import com.bizpilot.sales.dto.LeadAssignRequest;
 import com.bizpilot.sales.dto.LeadCreateRequest;
@@ -42,6 +44,13 @@ import java.util.UUID;
  * organization is always resolved server-side from the authenticated tenant
  * context inside {@code LeadService} — no endpoint here accepts an
  * organization id from the client in any form.
+ *
+ * <p>{@code score} (Phase 18, CLAUDE.md §12) is the one exception to
+ * "every endpoint requires the matching {@code LEAD_*} permission" above —
+ * it additionally requires {@code AI_USE}, since it's an AI-assisted action
+ * on the lead resource, not a plain read. It delegates entirely to {@code
+ * ai.scoring.LeadScoringService}; this controller never touches AI
+ * infrastructure or lead-scoring validation logic itself.
  */
 @RestController
 @RequestMapping("/api/v1/leads")
@@ -50,11 +59,14 @@ public class LeadController {
     private final LeadService leadService;
     private final LeadMapper leadMapper;
     private final LeadActivityMapper activityMapper;
+    private final LeadScoringService leadScoringService;
 
-    public LeadController(LeadService leadService, LeadMapper leadMapper, LeadActivityMapper activityMapper) {
+    public LeadController(LeadService leadService, LeadMapper leadMapper, LeadActivityMapper activityMapper,
+                           LeadScoringService leadScoringService) {
         this.leadService = leadService;
         this.leadMapper = leadMapper;
         this.activityMapper = activityMapper;
+        this.leadScoringService = leadScoringService;
     }
 
     @PostMapping
@@ -154,5 +166,19 @@ public class LeadController {
             @PathVariable UUID id,
             @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
         return leadService.getHistory(id, pageable).map(activityMapper::toResponse);
+    }
+
+    /**
+     * AI-generated lead scoring (Phase 18, CLAUDE.md §12) — synchronous,
+     * on-demand, single-lead, advisory only. The response's {@code
+     * priority} is a suggestion; it is never written to this lead's own
+     * {@code priority} field or any other stored data (project instructions
+     * §1/§24). Requires {@code AI_USE} in addition to {@code LEAD_READ} —
+     * deliberately not satisfied by either permission alone.
+     */
+    @PostMapping("/{id}/score")
+    @PreAuthorize("hasAuthority('LEAD_READ') and hasAuthority('AI_USE')")
+    public LeadScoreResponse score(@PathVariable UUID id) {
+        return leadScoringService.score(id);
     }
 }

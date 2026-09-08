@@ -1,5 +1,6 @@
 package com.bizpilot.ai.chat;
 
+import com.bizpilot.ai.exception.AiProviderException;
 import com.bizpilot.ai.service.AiChatService;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
@@ -26,10 +27,17 @@ public class RecordingFakeAiChatService implements AiChatService {
     public record Invocation(String systemPrompt, String userMessage, List<Object> tools) {
     }
 
+    /** Phase 18 — records a {@link #chatForStructuredOutput} call. */
+    public record StructuredInvocation(String systemPrompt, String userMessage, Class<?> responseType) {
+    }
+
     private final List<Invocation> invocations = new ArrayList<>();
+    private final List<StructuredInvocation> structuredInvocations = new ArrayList<>();
     private String cannedAnswer = "This is a deterministic test answer.";
     private String simulatedToolName;
     private String simulatedToolArgumentsJson;
+    private Object structuredOutputToReturn;
+    private AiProviderException structuredOutputFailure;
 
     @Override
     public String chat(String prompt) {
@@ -53,14 +61,48 @@ public class RecordingFakeAiChatService implements AiChatService {
         return cannedAnswer;
     }
 
+    /**
+     * Phase 18 — the structured-output overload. Faithfully mirrors {@code
+     * DefaultAiChatService}'s documented contract: a configured failure is
+     * always an {@link AiProviderException} (never a raw/unwrapped
+     * exception), exactly as a real implementation would throw.
+     */
+    @Override
+    public <T> T chatForStructuredOutput(String systemPrompt, String userMessage, Class<T> responseType) {
+        structuredInvocations.add(new StructuredInvocation(systemPrompt, userMessage, responseType));
+        if (structuredOutputFailure != null) {
+            throw structuredOutputFailure;
+        }
+        if (structuredOutputToReturn == null) {
+            throw new IllegalStateException(
+                    "No structured output configured — call setStructuredOutputToReturn(...) first");
+        }
+        return responseType.cast(structuredOutputToReturn);
+    }
+
     public List<Invocation> invocations() {
         return invocations;
     }
 
+    public List<StructuredInvocation> structuredInvocations() {
+        return structuredInvocations;
+    }
+
     public void reset() {
         invocations.clear();
+        structuredInvocations.clear();
         simulatedToolName = null;
         simulatedToolArgumentsJson = null;
+        structuredOutputToReturn = null;
+        structuredOutputFailure = null;
+    }
+
+    public void setStructuredOutputToReturn(Object value) {
+        this.structuredOutputToReturn = value;
+    }
+
+    public void setStructuredOutputFailure(AiProviderException failure) {
+        this.structuredOutputFailure = failure;
     }
 
     public void setCannedAnswer(String cannedAnswer) {

@@ -152,4 +152,80 @@ class DefaultAiChatServiceTest {
                 .isInstanceOf(AiProviderException.class)
                 .satisfies(ex -> assertThat(ex.getMessage()).doesNotContain("sk-super-secret-value"));
     }
+
+    // ---- chatForStructuredOutput(systemPrompt, userMessage, Class) — Phase 18 addition ------
+
+    private record TestStructuredOutput(int score, String priority) {
+    }
+
+    @Test
+    void structuredOutputSendsTheSystemAndUserMessagesSeparatelyAndReturnsTheParsedEntity() {
+        when(chatClient.prompt()).thenReturn(requestSpec);
+        when(requestSpec.system(anyString())).thenReturn(requestSpec);
+        when(requestSpec.user(anyString())).thenReturn(requestSpec);
+        when(requestSpec.call()).thenReturn(callResponseSpec);
+        TestStructuredOutput expected = new TestStructuredOutput(78, "HIGH");
+        when(callResponseSpec.entity(TestStructuredOutput.class)).thenReturn(expected);
+
+        TestStructuredOutput result = service().chatForStructuredOutput(
+                "system instructions", "user context", TestStructuredOutput.class);
+
+        assertThat(result).isEqualTo(expected);
+        verify(requestSpec).system("system instructions");
+        verify(requestSpec).user("user context");
+    }
+
+    @Test
+    void structuredOutputNeverCallsChatResponseAvoidingASecondProviderRequest() {
+        when(chatClient.prompt()).thenReturn(requestSpec);
+        when(requestSpec.system(anyString())).thenReturn(requestSpec);
+        when(requestSpec.user(anyString())).thenReturn(requestSpec);
+        when(requestSpec.call()).thenReturn(callResponseSpec);
+        when(callResponseSpec.entity(TestStructuredOutput.class)).thenReturn(new TestStructuredOutput(50, "MEDIUM"));
+
+        service().chatForStructuredOutput("system", "user", TestStructuredOutput.class);
+
+        verify(callResponseSpec, never()).chatResponse();
+    }
+
+    @Test
+    void structuredOutputWrapsAProviderFailureInAiProviderException() {
+        when(chatClient.prompt()).thenReturn(requestSpec);
+        when(requestSpec.system(anyString())).thenReturn(requestSpec);
+        when(requestSpec.user(anyString())).thenReturn(requestSpec);
+        when(requestSpec.call()).thenThrow(new RuntimeException("connection reset"));
+
+        assertThatThrownBy(() -> service().chatForStructuredOutput("system", "user", TestStructuredOutput.class))
+                .isInstanceOf(AiProviderException.class)
+                .hasCauseInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    void structuredOutputWrapsAnUnparseableResponseInAiProviderException() {
+        // Mirrors BeanOutputConverter.convert's actual verified behavior:
+        // a malformed/unparseable model response surfaces as a plain
+        // RuntimeException, indistinguishable in type from any other
+        // provider failure — treated identically here.
+        when(chatClient.prompt()).thenReturn(requestSpec);
+        when(requestSpec.system(anyString())).thenReturn(requestSpec);
+        when(requestSpec.user(anyString())).thenReturn(requestSpec);
+        when(requestSpec.call()).thenReturn(callResponseSpec);
+        when(callResponseSpec.entity(TestStructuredOutput.class))
+                .thenThrow(new RuntimeException("Could not parse the given text to the desired target type"));
+
+        assertThatThrownBy(() -> service().chatForStructuredOutput("system", "user", TestStructuredOutput.class))
+                .isInstanceOf(AiProviderException.class);
+    }
+
+    @Test
+    void structuredOutputAiProviderExceptionNeverLeaksTheRawProviderExceptionMessage() {
+        when(chatClient.prompt()).thenReturn(requestSpec);
+        when(requestSpec.system(anyString())).thenReturn(requestSpec);
+        when(requestSpec.user(anyString())).thenReturn(requestSpec);
+        when(requestSpec.call()).thenThrow(new RuntimeException("api-key sk-super-secret-value rejected"));
+
+        assertThatThrownBy(() -> service().chatForStructuredOutput("system", "user", TestStructuredOutput.class))
+                .isInstanceOf(AiProviderException.class)
+                .satisfies(ex -> assertThat(ex.getMessage()).doesNotContain("sk-super-secret-value"));
+    }
 }
