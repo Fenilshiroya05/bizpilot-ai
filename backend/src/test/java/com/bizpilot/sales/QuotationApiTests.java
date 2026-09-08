@@ -161,6 +161,24 @@ class QuotationApiTests {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
+    /**
+     * Production-readiness audit finding (post-Phase-19): quantity was
+     * previously unbounded above, risking a raw NUMERIC(19,4) overflow
+     * error instead of a clean validation failure.
+     */
+    @Test
+    void creatingWithAnExcessivelyLargeQuantityFailsValidation() {
+        String token = managerToken("q10-hugeqty@example.com", "HugeQty Co");
+        UUID customerId = createCustomer(token, "Jane Customer").id();
+        UUID productId = createProduct(token, "SKU-115", new BigDecimal("10.00"), BigDecimal.ZERO).id();
+
+        QuotationCreateRequest request = new QuotationCreateRequest(customerId, null, null,
+                List.of(new QuotationItemRequest(productId, new BigDecimal("10000000"))));
+        ResponseEntity<ApiError> response = postWithToken("/api/v1/quotations", request, token, ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
     @Test
     void gettingANonexistentQuotationReturns404() {
         String token = managerToken("q10-notfound@example.com", "NotFound Co");
@@ -219,6 +237,35 @@ class QuotationApiTests {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody().status()).isEqualTo(QuotationStatus.SENT);
+    }
+
+    /**
+     * Production-readiness audit finding (post-Phase-19): {@code
+     * QuotationService.update} previously had no status guard at all,
+     * unlike the structurally identical, already-immutable {@code Invoice}
+     * (see {@code InvoiceApiTests.updatingAnIssuedInvoiceIsRejectedAsAConflict},
+     * mirrored here) — a quotation that had already left DRAFT could still
+     * be silently mutated via a normal PATCH.
+     */
+    @Test
+    void updatingANoLongerDraftQuotationIsRejectedAsAConflict() {
+        String token = managerToken("q10-immutable@example.com", "Immutable Co");
+        UUID customerId = createCustomer(token, "Jane Customer").id();
+        UUID productId = createProduct(token, "SKU-114", new BigDecimal("10.00"), BigDecimal.ZERO).id();
+        QuotationResponse created = createQuotation(token, customerId, productId, "1");
+
+        QuotationUpdateRequest leaveDraft = new QuotationUpdateRequest(
+                null, null, false, null, QuotationStatus.SENT, null);
+        assertThat(patchWithToken("/api/v1/quotations/" + created.id(), leaveDraft, token, QuotationResponse.class)
+                .getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        QuotationUpdateRequest secondUpdate = new QuotationUpdateRequest(
+                null, null, false, new BigDecimal("50"), null, null);
+        ResponseEntity<ApiError> response = patchWithToken(
+                "/api/v1/quotations/" + created.id(), secondUpdate, token, ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody().code()).isEqualTo("QUOTATION_NOT_EDITABLE");
     }
 
     @Test

@@ -195,6 +195,41 @@ class QuotationServiceTest {
         assertThatThrownBy(() -> service().getById(id)).isInstanceOf(QuotationNotFoundException.class);
     }
 
+    /**
+     * Production-readiness audit finding (post-Phase-19): {@code update}
+     * previously had no status guard at all, unlike the structurally
+     * identical, already-immutable {@code Invoice} — an ACCEPTED/REJECTED/
+     * EXPIRED/CANCELLED quotation could still be silently mutated. This
+     * test, and the one below, are the regression coverage for that fix.
+     */
+    @Test
+    void updateRejectsAnyChangeOnceTheQuotationIsNoLongerDraft() {
+        Quotation existing = new Quotation(organization, customer, null, BigDecimal.ZERO);
+        existing.setStatus(QuotationStatus.ACCEPTED);
+        when(quotationRepository.findByIdAndOrganizationIdWithItems(any(), any())).thenReturn(Optional.of(existing));
+
+        QuotationUpdateRequest request = new QuotationUpdateRequest(
+                null, LocalDate.now().plusDays(30), false, null, null, null);
+
+        assertThatThrownBy(() -> service().update(UUID.randomUUID(), request))
+                .isInstanceOf(com.bizpilot.sales.exception.QuotationNotEditableException.class);
+        verify(quotationRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void updateRejectsAnyChangeOnAnAlreadyCancelledQuotation() {
+        Quotation existing = new Quotation(organization, customer, null, BigDecimal.ZERO);
+        existing.setStatus(QuotationStatus.CANCELLED);
+        when(quotationRepository.findByIdAndOrganizationIdWithItems(any(), any())).thenReturn(Optional.of(existing));
+
+        QuotationUpdateRequest request = new QuotationUpdateRequest(
+                null, null, false, BigDecimal.TEN, null, null);
+
+        assertThatThrownBy(() -> service().update(UUID.randomUUID(), request))
+                .isInstanceOf(com.bizpilot.sales.exception.QuotationNotEditableException.class);
+        verify(quotationRepository, never()).saveAndFlush(any());
+    }
+
     @Test
     void updateRejectsSettingStatusToCancelledDirectly() {
         Quotation existing = new Quotation(organization, customer, null, BigDecimal.ZERO);

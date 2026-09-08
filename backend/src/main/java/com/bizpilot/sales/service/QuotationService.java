@@ -17,6 +17,7 @@ import com.bizpilot.sales.entity.QuotationStatus;
 import com.bizpilot.sales.exception.InvalidCustomerReferenceException;
 import com.bizpilot.sales.exception.InvalidProductReferenceException;
 import com.bizpilot.sales.exception.InvalidQuotationDataException;
+import com.bizpilot.sales.exception.QuotationNotEditableException;
 import com.bizpilot.sales.exception.QuotationNotFoundException;
 import com.bizpilot.sales.repository.QuotationRepository;
 import org.springframework.data.domain.Page;
@@ -97,6 +98,15 @@ public class QuotationService {
         UUID organizationId = tenantContext.currentOrganizationId();
         Quotation quotation = quotationRepository.findByIdAndOrganizationIdWithItems(id, organizationId)
                 .orElseThrow(() -> new QuotationNotFoundException(id));
+
+        // Production-readiness audit finding (post-Phase-19): this guard was
+        // previously missing entirely, unlike the structurally identical
+        // Invoice.update, which has always rejected any update once the
+        // invoice leaves DRAFT. Rejected outright, before any field is
+        // examined — mirrors InvoiceService.update exactly.
+        if (!quotation.isDraft()) {
+            throw new QuotationNotEditableException(id);
+        }
 
         if (request.status() != null) {
             if (request.status() == QuotationStatus.CANCELLED) {

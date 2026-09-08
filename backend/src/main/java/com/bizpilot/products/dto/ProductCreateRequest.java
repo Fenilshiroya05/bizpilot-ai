@@ -28,7 +28,11 @@ public record ProductCreateRequest(
 
         @NotBlank @Size(max = 20) String unit,
 
-        @NotNull @DecimalMin(value = "0", inclusive = true) BigDecimal price,
+        // @DecimalMax (production-readiness audit finding, post-Phase-19):
+        // mirrors ProductUpdateRequest's identical bound — an unbounded
+        // price could otherwise combine with an item quantity to overflow
+        // NUMERIC(19,4) on a quotation/invoice line.
+        @NotNull @DecimalMin(value = "0", inclusive = true) @DecimalMax("99999999.9999") BigDecimal price,
 
         @DecimalMin(value = "0", inclusive = true) @DecimalMax(value = "100", inclusive = true) BigDecimal taxPercentage,
 

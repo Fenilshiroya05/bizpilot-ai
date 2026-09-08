@@ -126,8 +126,15 @@ public class DocumentProcessingService {
             // exception (it is always logged, with type and stack trace,
             // and always results in an explicit FAILED transition).
             long durationMs = Duration.between(start, Instant.now()).toMillis();
+            // Production-readiness audit finding (post-Phase-19): `e` was
+            // previously never passed as the trailing SLF4J argument, so
+            // despite this method's own comment claiming "always logged,
+            // with type and stack trace," no stack trace was ever actually
+            // printed — only the exception's simple class name. Passing `e`
+            // here (server-side log only; never reaches any client
+            // response) restores that.
             log.error("Document processing failed [documentId={}, organizationId={}, durationMs={}, errorType={}]",
-                    documentId, organizationId, durationMs, e.getClass().getSimpleName());
+                    documentId, organizationId, durationMs, e.getClass().getSimpleName(), e);
             documentProcessingResultService.markFailed(documentId, e);
         }
     }

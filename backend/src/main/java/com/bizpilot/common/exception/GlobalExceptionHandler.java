@@ -28,6 +28,7 @@ import com.bizpilot.sales.exception.InvoiceNotEditableException;
 import com.bizpilot.sales.exception.InvoiceNotFoundException;
 import com.bizpilot.sales.exception.LeadArchivedException;
 import com.bizpilot.sales.exception.LeadNotFoundException;
+import com.bizpilot.sales.exception.QuotationNotEditableException;
 import com.bizpilot.sales.exception.QuotationNotFoundException;
 import com.bizpilot.security.exception.AccountNotActiveException;
 import com.bizpilot.security.exception.InvalidCredentialsException;
@@ -47,6 +48,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -168,6 +170,35 @@ public class GlobalExceptionHandler {
         // customer status string) deserializing a request body — without this,
         // Jackson's deserialization failure would otherwise fall through to the
         // generic 500 handler below instead of a client-caused 400.
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "VALIDATION_ERROR",
+                "Invalid request",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    /**
+     * Production-readiness audit finding (post-Phase-19): a malformed
+     * {@code @PathVariable UUID} (e.g. {@code GET /api/v1/customers/not-a-uuid})
+     * on any of the ~10 resource controllers previously had no handler here
+     * at all — resolution fell through to Spring MVC's own {@code
+     * DefaultHandlerExceptionResolver}, which handles this case itself and
+     * forwards to Boot's default {@code BasicErrorController}, producing a
+     * *different* JSON shape ({@code {timestamp,status,error,path}}, no
+     * {@code code}/{@code message}) than this project's own {@link ApiError}
+     * contract (CLAUDE.md §27) guarantees everywhere else. Not a data leak
+     * (Boot's own default error controller never includes a message/stack
+     * trace unless explicitly configured to, and this project's {@code
+     * application.yml} does not enable that) — purely an API-contract
+     * consistency gap, now closed the same way {@link
+     * #handleMalformedRequestBody} already closes the equivalent gap for a
+     * malformed request body.
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiError> handleTypeMismatch(MethodArgumentTypeMismatchException ex,
+                                                         HttpServletRequest request) {
         ApiError body = ApiError.of(
                 HttpStatus.BAD_REQUEST.value(),
                 "VALIDATION_ERROR",
@@ -404,6 +435,18 @@ public class GlobalExceptionHandler {
                 HttpStatus.CONFLICT.value(),
                 "INVOICE_NOT_EDITABLE",
                 "Only DRAFT invoices can be updated",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    @ExceptionHandler(QuotationNotEditableException.class)
+    public ResponseEntity<ApiError> handleQuotationNotEditable(QuotationNotEditableException ex,
+                                                                 HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.CONFLICT.value(),
+                "QUOTATION_NOT_EDITABLE",
+                "Only DRAFT quotations can be updated",
                 request.getRequestURI()
         );
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);

@@ -24,9 +24,9 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
     Optional<Document> findByIdAndOrganizationId(UUID id, UUID organizationId);
 
     /**
-     * Atomic {@code UPLOADED|FAILED -> PROCESSING} transition (Phase 15
-     * §31/§41) — the sole concurrency-protection mechanism for document
-     * processing. A single {@code UPDATE ... WHERE status IN (...)}
+     * Atomic {@code UPLOADED|FAILED|PROCESSING -> PROCESSING} transition
+     * (Phase 15 §31/§41) — the sole concurrency-protection mechanism for
+     * document processing. A single {@code UPDATE ... WHERE status IN (...)}
      * statement is evaluated atomically by PostgreSQL regardless of how
      * many callers race to invoke it concurrently (the event listener, the
      * recovery sweep, or both for the same document): only one caller's
@@ -50,12 +50,31 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
      * ambient transaction of its own (project instructions §16/§33), so
      * this repository method must supply its own short one — "Transaction
      * 1", exactly as designed, just declared here instead of in the caller.
+     *
+     * <p><b>Production-readiness audit finding (final verification
+     * pass):</b> this {@code WHERE} clause previously omitted {@code
+     * PROCESSING} — contradicting {@link #findStaleDocumentIds}'s and
+     * {@code DocumentRecoveryScheduler}'s own Javadoc, both of which
+     * explicitly document recovering a document "stuck in PROCESSING (a
+     * crash mid-pipeline)". With {@code PROCESSING} absent from this
+     * {@code IN} list, a document that crashed mid-pipeline could never
+     * actually be reclaimed by the recovery sweep — this statement always
+     * matched zero rows for it, so {@code process()} silently no-opped
+     * ("not in a processable state") on every single sweep, forever.
+     * Adding {@code PROCESSING} here is safe, not a new race: {@link
+     * com.bizpilot.documents.processing.DocumentRecoveryScheduler} only
+     * ever re-attempts a {@code PROCESSING} row once it is already older
+     * than the configured {@code stale-processing-threshold} (default 15
+     * minutes) — the existing, already-documented heuristic for "this
+     * row's original worker is presumed dead" — and this remains a single
+     * atomic conditional {@code UPDATE}, so a genuinely-still-running
+     * worker and a recovery attempt can never both "win" the same row.
      */
     @Transactional
     @Modifying
     @Query("""
             UPDATE Document d SET d.status = 'PROCESSING', d.updatedAt = CURRENT_TIMESTAMP
-            WHERE d.id = :id AND d.status IN ('UPLOADED', 'FAILED')
+            WHERE d.id = :id AND d.status IN ('UPLOADED', 'FAILED', 'PROCESSING')
             """)
     int transitionToProcessing(@Param("id") UUID id);
 

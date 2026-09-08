@@ -22,6 +22,13 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: false
+  # Production-readiness audit finding (post-Phase-19): paired with
+  # `server.shutdown: graceful` below — bounds how long Spring waits for
+  # in-flight requests (and any other graceful-shutdown-aware bean) to
+  # finish during shutdown before proceeding anyway, so a stuck request
+  # can never block the container from ever terminating.
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
   servlet:
     multipart:
       # Primary, framework-level enforcement of the 20 MB document upload
@@ -106,6 +113,17 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+  # Production-readiness audit finding (post-Phase-19): Spring Boot's default
+  # is "immediate" shutdown — on SIGTERM (a plain `docker compose down`/
+  # `restart` today; a Kubernetes rolling deployment in a future phase),
+  # Tomcat would otherwise terminate in-flight HTTP requests mid-response
+  # instead of draining them. `graceful`, paired with `spring.lifecycle.
+  # timeout-per-shutdown-phase` above, lets Tomcat stop accepting new
+  # requests immediately while letting already-in-flight ones complete
+  # (bounded by that timeout) before the JVM exits. Mirrors the document-
+  # processing executor's own, already-correct `waitForTasksToCompleteOnShutdown`
+  # behavior (DocumentProcessingConfig), just for the HTTP layer.
+  shutdown: graceful
 
 bizpilot:
   jwt:

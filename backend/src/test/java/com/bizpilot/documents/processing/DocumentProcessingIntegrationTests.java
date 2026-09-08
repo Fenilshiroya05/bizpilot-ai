@@ -151,6 +151,46 @@ class DocumentProcessingIntegrationTests {
         assertThat(vectorRowCount).isEqualTo(secondAttemptChunks.size());
     }
 
+    /**
+     * Production-readiness audit finding (final verification pass):
+     * {@code DocumentRepository.transitionToProcessing}'s {@code WHERE}
+     * clause previously omitted {@code PROCESSING} from its {@code IN}
+     * list — contradicting {@code findStaleDocumentIds}'s/{@code
+     * DocumentRecoveryScheduler}'s own Javadoc, both of which explicitly
+     * document recovering a document "stuck in PROCESSING (a crash
+     * mid-pipeline)". A document left in {@code PROCESSING} (simulating a
+     * crash mid-pipeline, exactly as {@code DocumentRecoveryScheduler}
+     * would find it after the configured staleness threshold) could
+     * previously never actually be reclaimed — {@code process()} always
+     * hit the "not in a processable state" no-op path. This test proves
+     * the fix: the exact same {@code process()} call the recovery
+     * scheduler itself makes now successfully reclaims and completes a
+     * {@code PROCESSING} document.
+     */
+    @Test
+    void aDocumentStuckInProcessingIsReclaimedAndCompletedByTheRecoveryPath() {
+        String token = managerToken("rag-stuck-processing@example.com", "Rag Stuck Processing Org");
+        DocumentResponse uploaded = upload(token, "notes.txt", "text/plain",
+                "A document simulating a crash mid-pipeline must still be recoverable.".getBytes(StandardCharsets.UTF_8));
+        awaitStatus(token, uploaded.id(), DocumentStatus.COMPLETED);
+
+        // Simulate exactly what DocumentRecoveryScheduler would find: a
+        // document whose worker died mid-pipeline, left behind in
+        // PROCESSING (never FAILED, since a crash never runs the catch
+        // block at all).
+        forceStatus(uploaded.id(), DocumentStatus.PROCESSING);
+
+        int transitioned = documentRepository.transitionToProcessing(uploaded.id());
+        assertThat(transitioned)
+                .as("transitionToProcessing must successfully reclaim a PROCESSING row, "
+                        + "exactly as DocumentRecoveryScheduler's own Javadoc already promises")
+                .isEqualTo(1);
+
+        documentProcessingService.process(uploaded.id());
+        DocumentResponse recovered = awaitStatus(token, uploaded.id(), DocumentStatus.COMPLETED);
+        assertThat(recovered.status()).isEqualTo(DocumentStatus.COMPLETED);
+    }
+
     @Test
     void deletingADocumentRemovesItsChunksAndVectors() {
         String token = managerToken("rag-delete@example.com", "Rag Delete Org");

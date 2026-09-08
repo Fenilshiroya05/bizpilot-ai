@@ -112,6 +112,23 @@ class ProductApiTests {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
+    /**
+     * Production-readiness audit finding (post-Phase-19): price was
+     * previously unbounded above, risking a raw NUMERIC(19,4) overflow
+     * error (on a later quotation/invoice line) instead of a clean
+     * validation failure at product-creation time.
+     */
+    @Test
+    void creatingWithAnExcessivelyLargePriceFailsValidation() {
+        String token = managerToken("hugeprice@example.com", "HugePrice Co");
+        ProductCreateRequest request = new ProductCreateRequest(
+                "SKU-HUGE", "Widget", null, "pcs", new BigDecimal("100000000000"), null, null);
+
+        ResponseEntity<ApiError> response = postWithToken("/api/v1/products", request, token, ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
     @Test
     void creatingWithAZeroPriceSucceeds() {
         String token = managerToken("zeroprice@example.com", "ZeroPrice Co");

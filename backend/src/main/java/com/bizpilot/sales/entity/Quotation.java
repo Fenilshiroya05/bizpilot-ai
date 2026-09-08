@@ -173,4 +173,19 @@ public class Quotation extends BaseEntity {
     public boolean isCancelled() {
         return status == QuotationStatus.CANCELLED;
     }
+
+    /**
+     * Production-readiness audit finding (post-Phase-19): mirrors {@code
+     * Invoice.isDraft()} exactly. A quotation's structural/financial content
+     * (customer, items, discount, and the recalculated totals) is only
+     * editable while {@link #status} is {@link QuotationStatus#DRAFT} —
+     * enforced by {@code QuotationService.update}, the same rule already
+     * established for {@code Invoice} (Phase 11). Before this fix, {@code
+     * QuotationService.update} had no status guard at all, so an
+     * ACCEPTED/REJECTED/EXPIRED/CANCELLED quotation — a document with real
+     * business/legal weight — could still be silently altered.
+     */
+    public boolean isDraft() {
+        return status == QuotationStatus.DRAFT;
+    }
 }
