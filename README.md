@@ -408,6 +408,26 @@ Phase 15 adds document ingestion (text extraction → chunking → embeddings �
 - **No new infrastructure** — PGVector runs inside the same `pgvector/pgvector:pg16` Postgres image already used since Phase 3; no separate vector database, no Ollama/proxy service.
 - Tenant isolation is mandatory and enforced at query time, not as an afterthought — see [docs/security.md](docs/security.md) §3m for the full account, including two real bugs (a startup-configuration issue and a transaction-boundary issue) caught and fixed before this phase was reported complete.
 
+### AI Assistant (Phase 16)
+
+Phase 16 adds the first real AI endpoint — a RAG-only, stateless question-answering assistant grounded strictly in your organization's own ingested documents (Phase 15). No conversation history, no business tools, no ability to take any action.
+
+```bash
+# Requires AI_USE (already granted to every role) and the same four AI_*
+# variables as Phase 15 (AI_ENABLED, AI_CHAT_PROVIDER, AI_EMBEDDING_PROVIDER,
+# AI_VECTORSTORE_TYPE, all =openai/pgvector) plus a real OPENAI_API_KEY.
+curl -s -X POST http://localhost:8080/api/v1/ai/chat \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"message": "What does our migration guide say about backups?"}'
+
+# {"answer": "...", "sources": [{"documentId": "...", "documentName": "migration-guide.pdf", "chunkIndex": 3}]}
+```
+
+- **If nothing in your organization's documents is relevant**, the response is a deterministic `200` — `{"answer": "I couldn't find enough information in your organization's documents to answer that.", "sources": []}` — the LLM is never called for this case, by design (never a guessed answer).
+- **If AI is disabled** (the default — same as Phase 14/15), the endpoint returns `503` with `{"code": "AI_DISABLED", ...}` immediately, no retrieval or OpenAI call attempted. Verified live in Docker with no `OPENAI_API_KEY` at all.
+- **Retrieved document content is always treated as data, never as instructions** — enforced structurally via Spring AI's own system/user message role separation, not just prompt wording. See [docs/security.md](docs/security.md) §3n for the full account, including the live cross-tenant and prompt-injection test evidence.
+- No conversation memory, no streaming, no tool calling, no business-data access (customers/leads/invoices/etc.) — this endpoint only ever answers from your organization's uploaded documents.
+
 ## Running the Frontend
 
 Not yet available. Will be documented starting in Phase 20 once the Vite project is scaffolded (`cd frontend && npm install && npm run dev`).

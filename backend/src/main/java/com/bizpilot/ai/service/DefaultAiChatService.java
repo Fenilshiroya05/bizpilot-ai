@@ -60,6 +60,30 @@ public class DefaultAiChatService implements AiChatService {
     }
 
     /**
+     * Deliberately a separate method body from {@link #chat(String)} rather
+     * than a shared private helper both delegate to — this guarantees
+     * {@link #chat(String)}'s existing behavior (and Phase 14's tests
+     * against it) are completely unaffected by this Phase 16 addition, at
+     * the cost of a few duplicated lines.
+     */
+    @Override
+    public String chat(String systemPrompt, String userMessage) {
+        Instant start = Instant.now();
+        try {
+            ChatResponse response = chatClient.prompt()
+                    .system(systemPrompt)
+                    .user(userMessage)
+                    .call()
+                    .chatResponse();
+            logOutcome(true, response, start, null);
+            return response.getResult().getOutput().getText();
+        } catch (RuntimeException e) {
+            logOutcome(false, null, start, e);
+            throw new AiProviderException("AI chat request failed", e);
+        }
+    }
+
+    /**
      * Logs only safe metadata (project instructions §12) — provider, model
      * (read back from the response itself, never a provider-specific config
      * property, so this stays provider-agnostic), duration, success/failure,

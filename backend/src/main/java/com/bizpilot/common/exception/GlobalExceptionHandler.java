@@ -1,5 +1,7 @@
 package com.bizpilot.common.exception;
 
+import com.bizpilot.ai.exception.AiDisabledException;
+import com.bizpilot.ai.exception.AiProviderException;
 import com.bizpilot.common.response.ApiError;
 import com.bizpilot.crm.exception.CustomerArchivedException;
 import com.bizpilot.crm.exception.CustomerNotFoundException;
@@ -55,6 +57,25 @@ import java.util.Map;
  * Centralized exception handling foundation. Business-specific exceptions and
  * mappings are added in later phases as those modules are implemented.
  * Internal error details are never exposed to clients (see docs/security.md).
+ *
+ * <p><b>Phase 16 deliberately does NOT add a handler for {@code
+ * IllegalStateException}</b> — {@code TenantContext.currentOrganizationId()}
+ * throws it when no authenticated tenant context exists (the fail-closed
+ * mechanism {@code ai.retrieval.DocumentRetrievalService} relies on), but
+ * the exact same exception type is also thrown, unrelated, all over the
+ * codebase for generic "this should be unreachable" invariant violations
+ * (e.g. {@code InvoiceService}/{@code QuotationService}/{@code
+ * DocumentProcessingResultService}'s "vanished immediately after save",
+ * {@code JwtService}'s algorithm setup, {@code RefreshTokenService}'s
+ * SHA-256 availability check). A blanket {@code @ExceptionHandler(
+ * IllegalStateException.class)} would silently catch all of these too,
+ * masking genuine bugs behind whatever response this handler chose. Since
+ * the existing generic {@link #handleUnexpected} fallback below already
+ * behaves exactly as required for the missing-tenant-context case (fails
+ * closed — no retrieval or provider call has occurred by the time it's
+ * thrown; logs full details server-side; returns a safe, generic 500 to
+ * the client) — introducing a new exception type or a new mapping would
+ * add machinery without changing behavior. See docs/security.md §3n.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -507,6 +528,32 @@ public class GlobalExceptionHandler {
                 request.getRequestURI()
         );
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(body);
+    }
+
+    @ExceptionHandler(AiDisabledException.class)
+    public ResponseEntity<ApiError> handleAiDisabled(AiDisabledException ex, HttpServletRequest request) {
+        ApiError body = ApiError.of(
+                HttpStatus.SERVICE_UNAVAILABLE.value(),
+                "AI_DISABLED",
+                "The AI assistant is currently unavailable",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
+    }
+
+    @ExceptionHandler(AiProviderException.class)
+    public ResponseEntity<ApiError> handleAiProviderFailure(AiProviderException ex, HttpServletRequest request) {
+        // Never pass ex.getMessage()/ex.getCause() through — mirrors
+        // DocumentStorageException's handling above. Logged server-side
+        // only for diagnosis.
+        log.error("AI provider failure while processing request {}", request.getRequestURI(), ex);
+        ApiError body = ApiError.of(
+                HttpStatus.BAD_GATEWAY.value(),
+                "AI_PROVIDER_ERROR",
+                "The AI assistant is temporarily unavailable",
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(body);
     }
 
     @ExceptionHandler(Exception.class)

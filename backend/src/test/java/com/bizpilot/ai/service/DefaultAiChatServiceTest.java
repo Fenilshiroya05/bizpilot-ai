@@ -90,4 +90,66 @@ class DefaultAiChatServiceTest {
                 .isInstanceOf(AiProviderException.class)
                 .satisfies(ex -> assertThat(ex.getMessage()).doesNotContain("sk-super-secret-value"));
     }
+
+    // ---- chat(systemPrompt, userMessage) — Phase 16 addition ------------------------------
+
+    @Test
+    void twoArgChatSendsTheSystemAndUserMessagesSeparately() {
+        stubSuccessfulResponse("ok");
+        when(requestSpec.system(anyString())).thenReturn(requestSpec);
+
+        service().chat("You are a trusted assistant.", "What does the document say?");
+
+        verify(requestSpec).system("You are a trusted assistant.");
+        verify(requestSpec).user("What does the document say?");
+    }
+
+    @Test
+    void twoArgChatReturnsTheAssistantResponseText() {
+        stubSuccessfulResponse("Grounded answer");
+        when(requestSpec.system(anyString())).thenReturn(requestSpec);
+
+        String result = service().chat("system prompt", "user question");
+
+        assertThat(result).isEqualTo("Grounded answer");
+    }
+
+    @Test
+    void twoArgChatNeverConcatenatesSystemAndUserIntoOneCall() {
+        // The security-critical assertion: the system prompt must never
+        // also appear as (part of) the user message, and vice versa.
+        stubSuccessfulResponse("ok");
+        when(requestSpec.system(anyString())).thenReturn(requestSpec);
+
+        service().chat("SYSTEM_MARKER", "USER_MARKER");
+
+        verify(requestSpec).system(eq("SYSTEM_MARKER"));
+        verify(requestSpec).user(eq("USER_MARKER"));
+        verify(requestSpec, never()).system(contains("USER_MARKER"));
+        verify(requestSpec, never()).user(contains("SYSTEM_MARKER"));
+    }
+
+    @Test
+    void twoArgChatWrapsAProviderFailureInAiProviderException() {
+        when(chatClient.prompt()).thenReturn(requestSpec);
+        when(requestSpec.system(anyString())).thenReturn(requestSpec);
+        when(requestSpec.user(anyString())).thenReturn(requestSpec);
+        when(requestSpec.call()).thenThrow(new RuntimeException("connection reset"));
+
+        assertThatThrownBy(() -> service().chat("system", "user"))
+                .isInstanceOf(AiProviderException.class)
+                .hasCauseInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    void twoArgChatAiProviderExceptionNeverLeaksTheRawProviderExceptionMessage() {
+        when(chatClient.prompt()).thenReturn(requestSpec);
+        when(requestSpec.system(anyString())).thenReturn(requestSpec);
+        when(requestSpec.user(anyString())).thenReturn(requestSpec);
+        when(requestSpec.call()).thenThrow(new RuntimeException("api-key sk-super-secret-value rejected"));
+
+        assertThatThrownBy(() -> service().chat("system", "user"))
+                .isInstanceOf(AiProviderException.class)
+                .satisfies(ex -> assertThat(ex.getMessage()).doesNotContain("sk-super-secret-value"));
+    }
 }

@@ -29,4 +29,19 @@ public interface AiChatService {
      *                              limiting, malformed response, ...)
      */
     String chat(String prompt);
+
+    /**
+     * Sends {@code systemPrompt} and {@code userMessage} as separate,
+     * distinct messages (Spring AI's/the provider's own system/user role
+     * separation — never concatenated into one string) and returns the text
+     * response. Added in Phase 16 so a caller (the AI assistant) can supply
+     * trusted system instructions separately from untrusted user/document
+     * content — the actual technical control behind "retrieved document
+     * content must never be treated as an instruction," not achievable
+     * through {@link #chat(String)} alone.
+     *
+     * @throws AiProviderException if the underlying provider call fails for
+     *                              any reason
+     */
+    String chat(String systemPrompt, String userMessage);
 }
