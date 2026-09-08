@@ -467,6 +467,26 @@ curl -s -X POST http://localhost:8080/api/v1/leads/$LEAD_ID/score \
 - **No conversation/history** — a fresh assessment is generated on every call; nothing about a previous scoring request is remembered.
 - See [docs/ai-architecture.md](docs/ai-architecture.md) §0/§6 and [docs/security.md](docs/security.md) §3p for the full account.
 
+### Analytics Summary API (Phase 19)
+
+Phase 19 adds the `analytics` module's first real code: `GET /api/v1/analytics/summary`, a read-only, deterministic, tenant-scoped business summary — no AI involved.
+
+```bash
+# Requires ANALYTICS_READ (seeded for every role — OWNER/ADMIN/MANAGER/SALES/EMPLOYEE).
+curl -s http://localhost:8080/api/v1/analytics/summary \
+  -H "Authorization: Bearer $TOKEN"
+
+# {"totalCustomers": 12, "newLeads": 4, "qualifiedLeads": 2, "conversionRate": 40.00,
+#  "revenue": 12500.0000, "outstandingInvoicesCount": 3, "outstandingInvoicesTotal": 4200.0000,
+#  "pendingFollowUps": 2}
+```
+
+- **Every number is computed on demand by SQL aggregation** (`COUNT`/`SUM`) against existing Customer/Lead/Invoice data — nothing is cached, persisted, or estimated, and no entity list is ever loaded into memory.
+- **Fixed definitions, not configurable**: "new leads" and "revenue" both use a fixed last-30-days window; there is no `?since=`/`?days=` parameter. Revenue means *collected* revenue — the sum of `PAID` invoices only, not all issued invoices.
+- **No AI** — this endpoint works identically whether `AI_ENABLED` is set or not, and requires no `OPENAI_API_KEY`. "AI Business Insights" (natural-language commentary on these numbers) is explicitly deferred to a later phase.
+- **No charts, no date ranges, no dashboard UI** — this phase is the summary-card numbers only; revenue trend/lead funnel/lead sources/pipeline/top-customers endpoints and the frontend dashboard itself (Phase 26) are separate, later phases.
+- See [docs/architecture.md](docs/architecture.md) §1r and [docs/security.md](docs/security.md) §2j/§3q for the full account.
+
 ## Running the Frontend
 
 Not yet available. Will be documented starting in Phase 20 once the Vite project is scaffolded (`cd frontend && npm install && npm run dev`).

@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 18 — a new `POST /api/v1/leads/{id}/score` endpoint (on the existing `LeadController`, not a new `ai`-module endpoint) produces an advisory, AI-generated lead scoring assessment using Spring AI's structured output — the first non-prose AI capability in this codebase. Never persisted, never written back to the lead. Still stateless, still no mutating actions, no conversation persistence. Remaining business modules (`analytics`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 19 — a new `GET /api/v1/analytics/summary` endpoint (the `analytics` module's first real code) returns deterministic, tenant-scoped business summary metrics computed directly from existing Customer/Lead/Invoice data via SQL aggregation. No AI involvement of any kind, no persistence beyond the existing business tables, no mutation. Remaining business modules (`notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -163,6 +163,16 @@
 - **No new REST endpoint beyond the one above, no new migration** (Flyway remains at `V12`), **no new RBAC permission** (reuses `LEAD_READ`/`AI_USE`), **no new Maven dependency**, **no change to** `POST /api/v1/ai/chat`, `DefaultAiAssistantService`, or the four Phase 17 tool classes.
 - Full detail is in [security.md](security.md) §3p and [ai-architecture.md](ai-architecture.md) §6/§0.
 
+## 1r. Analytics Summary API (Phase 19)
+
+- **`analytics` module gains its first real code**: `controller/AnalyticsController`, `service/AnalyticsService`, `dto/AnalyticsSummaryResponse`. Deliberately no `entity`/`repository`/`mapper`/`exception` package — Phase 19 introduces no new persistence and no new failure mode beyond the existing generic `401`/`403`/`500` handling.
+- **Endpoint**: `GET /api/v1/analytics/summary` — `ANALYTICS_READ`-gated, no request body, no query parameters (the 30-day windows and the "today" follow-up boundary are fixed server-side, never client-supplied). Returns `totalCustomers`, `newLeads`, `qualifiedLeads`, `conversionRate`, `revenue`, `outstandingInvoicesCount`, `outstandingInvoicesTotal`, `pendingFollowUps` — every field always present, `0`/`0.0000` rather than `null` when there is no matching data.
+- **Deliberate cross-cutting architectural exception (project instructions §14)**: `AnalyticsService` calls `CustomerRepository`/`LeadRepository`/`InvoiceRepository` directly rather than through `CustomerService`/`LeadService`/`InvoiceService`. Every other cross-module AI caller in this codebase (Phase 17 tools, Phase 18 scoring) goes through the domain service specifically to reuse that service's business rules for an operation *on a specific record* — a cross-cutting `COUNT`/`SUM` has no equivalent single-record rule to preserve, so adding six narrow, reporting-only methods to otherwise-unrelated domain services purely to satisfy a "go through the service" rule would be pure abstraction with no behavioral purpose. Tenant scoping is unaffected: every new aggregate query still filters by `organization_id` from `TenantContext`, exactly like every other tenant-scoped query in this codebase.
+- **Locked metric definitions, verified against the actual domain model, not assumed**: total customers = non-archived customers (`status <> ARCHIVED`, `crm.entity.Customer`'s own archive representation — there is no separate `archived` boolean); new leads = non-archived leads created in the last 30 days; qualified leads = current `LeadStatus.QUALIFIED` count (a current-state metric, no archived filter — the locked definition doesn't specify one); conversion rate = `WON / (WON + LOST) × 100`, 2 decimal places, `HALF_UP`, `0.00` when the denominator is zero; revenue = sum of `Invoice.total` for `PAID` invoices created in the last 30 days; outstanding invoices = count and total for `ISSUED`/`PARTIALLY_PAID`/`OVERDUE`; pending follow-ups = non-archived leads with a due-or-overdue `followUpDate` whose status is not `WON`/`LOST` (deliberately Lead-only — Task due dates are out of scope).
+- **Documented limitation**: `Invoice` has no separate remaining-balance field — `outstandingInvoicesTotal` sums the same `total` field a `PARTIALLY_PAID` invoice would report in full elsewhere in the API, not its true unpaid remainder, since no such field exists to compute from.
+- **No AI, no new migration beyond a permission seed** (`V13__create_analytics_permission.sql`, Flyway now at `V13`), **no new RBAC permission beyond `ANALYTICS_READ`** (granted to all five roles), **no new Maven dependency**, **no caching, no scheduled/background aggregation, no chart/date-range endpoints** (all explicitly deferred — see `docs/roadmap.md`).
+- Full detail is in [security.md](security.md) §2j/§3q.
+
 ## 1. Style
 
 BizPilot AI is built as a **modular monolith** on the backend, not a microservices system. Business capabilities are separated into clearly bounded Java packages (modules) inside a single Spring Boot application. This gives most of the maintainability benefits of modular design (clear boundaries, independent evolution, testability) without the operational overhead of distributed systems, which is not justified at this stage.
@@ -215,7 +225,7 @@ Each module owns its own controller/service/repository/entity/dto/mapper/excepti
 | `products` | Product catalog, categories ✅ (Phase 9) |
 | `documents` | Document upload, metadata, local storage abstraction ✅ (Phase 13); extraction/chunking/async processing pipeline ✅ (Phase 15) |
 | `ai` | Spring AI integration: chat ✅/embeddings ✅ foundation (Phase 14); PGVector storage + tenant-safe retrieval ✅ (Phase 15); RAG assistant chat ✅ (Phase 16); read-only business-data tool calling ✅ (Phase 17); structured-output AI lead scoring ✅ (Phase 18); mutating tools, conversation memory deferred |
-| `analytics` | Dashboards, aggregated reporting |
+| `analytics` | Business summary metrics ✅ (Phase 19, `GET /api/v1/analytics/summary`); charts, AI Business Insights, dashboard UI deferred |
 | `tasks` | Task management ✅ (Phase 12) |
 | `notifications` | Notification delivery |
 | `audit` | Audit logging for sensitive/important operations |

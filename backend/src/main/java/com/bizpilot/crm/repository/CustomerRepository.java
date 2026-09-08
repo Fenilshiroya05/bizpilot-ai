@@ -58,4 +58,19 @@ public interface CustomerRepository extends JpaRepository<Customer, UUID> {
     Page<Customer> searchExcludingArchived(@Param("organizationId") UUID organizationId,
                                             @Param("search") String search,
                                             Pageable pageable);
+
+    /**
+     * Phase 19 (CLAUDE.md §22, locked definition §16.1): "total customers"
+     * is a count of non-archived customers — the exact same {@code status
+     * <> ARCHIVED} predicate {@link #searchExcludingArchived} already uses
+     * for its own default listing, reused here as a {@code COUNT} instead
+     * of a paginated {@code SELECT}. Database-side aggregation — never
+     * loads a single {@code Customer} entity into the JVM.
+     */
+    @Query("""
+            SELECT COUNT(c) FROM Customer c
+            WHERE c.organization.id = :organizationId
+              AND c.status <> com.bizpilot.crm.entity.CustomerStatus.ARCHIVED
+            """)
+    long countExcludingArchived(@Param("organizationId") UUID organizationId);
 }

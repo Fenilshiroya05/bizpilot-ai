@@ -8,6 +8,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -74,4 +76,48 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
                           @Param("customerId") UUID customerId,
                           @Param("dueDateBefore") LocalDate dueDateBefore,
                           Pageable pageable);
+
+    /**
+     * Phase 19 (CLAUDE.md §22, locked definition §20): "revenue" is
+     * collected/paid revenue — the sum of {@code total} for {@code PAID}
+     * invoices created on or after {@code since} (the caller passes
+     * {@code now - 30 days}). Returns {@code null} when no row matches
+     * (standard JPQL {@code SUM} behavior over zero rows); {@code
+     * AnalyticsService} is responsible for the null-to-{@code ZERO}
+     * fallback, not this query, so this method's contract exactly matches
+     * plain JPQL semantics rather than hiding a COALESCE assumption behind
+     * it.
+     */
+    @Query("""
+            SELECT SUM(i.total) FROM Invoice i
+            WHERE i.organization.id = :organizationId
+              AND i.status = com.bizpilot.sales.entity.InvoiceStatus.PAID
+              AND i.createdAt >= :since
+            """)
+    BigDecimal sumPaidTotalCreatedOnOrAfter(@Param("organizationId") UUID organizationId,
+                                             @Param("since") Instant since);
+
+    /**
+     * Phase 19 (locked definition §21): "outstanding invoices" — count and
+     * total for {@code ISSUED}/{@code PARTIALLY_PAID}/{@code OVERDUE}
+     * invoices. Reuses {@code Invoice.total} (the only monetary amount
+     * this entity has — there is no separate remaining-balance field, see
+     * {@code AnalyticsService}'s Javadoc for the documented limitation this
+     * implies for {@code PARTIALLY_PAID} invoices specifically).
+     */
+    @Query("""
+            SELECT COUNT(i) FROM Invoice i
+            WHERE i.organization.id = :organizationId
+              AND i.status IN :statuses
+            """)
+    long countByStatuses(@Param("organizationId") UUID organizationId,
+                          @Param("statuses") List<InvoiceStatus> statuses);
+
+    @Query("""
+            SELECT SUM(i.total) FROM Invoice i
+            WHERE i.organization.id = :organizationId
+              AND i.status IN :statuses
+            """)
+    BigDecimal sumTotalByStatuses(@Param("organizationId") UUID organizationId,
+                                   @Param("statuses") List<InvoiceStatus> statuses);
 }

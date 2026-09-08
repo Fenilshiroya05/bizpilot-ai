@@ -18,9 +18,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Verifies the Flyway-seeded RBAC catalog (V4, extended by V7 in Phase 9, V9
- * in Phase 11, V10 in Phase 12, and V11 in Phase 13) matches the documented
- * mapping in docs/security.md exactly — role permissions section "Verify
- * each configured role receives the intended permissions."
+ * in Phase 11, V10 in Phase 12, V11 in Phase 13, and V13 in Phase 19)
+ * matches the documented mapping in docs/security.md exactly — role
+ * permissions section "Verify each configured role receives the intended
+ * permissions."
  *
  * <p>Updated in Phase 9: V7 added {@code PRODUCT_READ}/{@code CREATE}/
  * {@code UPDATE}/{@code DELETE} to the catalog. Updated in Phase 11: V9
@@ -39,14 +40,19 @@ import static org.assertj.core.api.Assertions.assertThat;
  * explicitly), and their existing mapping is untouched.
  * {@code DOCUMENT_DELETE} is restricted to OWNER/ADMIN/MANAGER only —
  * narrower than Task's unusually permissive mapping, since documents may
- * contain sensitive business files. CLAUDE.md §9 frames its permission
- * list as "Examples:", not a closed set — see V7/V9/V10/V11's migration
- * comments and docs/security.md. This is an expected, necessary update to
- * a pre-existing Phase 6 regression test, not a change to its purpose:
- * updating the fixed expected-permission-set literals to match the now
- * intentionally-larger catalog, the same way Phase 9/11/12 themselves
- * updated this same test's literals when {@code PRODUCT_*}/
- * {@code INVOICE_*}/{@code TASK_*} were added.
+ * contain sensitive business files. Updated again in Phase 19: V13 added
+ * {@code ANALYTICS_READ}, granted to all five roles (a locked Phase 19
+ * decision — a read-only business summary is broadly visible information,
+ * the same "every role" mapping already used for {@code AI_USE}), so it
+ * appears in every expected set below, not just OWNER/ADMIN's full catalog.
+ * CLAUDE.md §9 frames its permission list as "Examples:", not a closed set —
+ * see V7/V9/V10/V11/V13's migration comments and docs/security.md. This is
+ * an expected, necessary update to a pre-existing Phase 6 regression test,
+ * not a change to its purpose: updating the fixed expected-permission-set
+ * literals to match the now intentionally-larger catalog, the same way
+ * Phase 9/11/12/19 themselves updated this same test's literals when
+ * {@code PRODUCT_*}/{@code INVOICE_*}/{@code TASK_*}/{@code ANALYTICS_READ}
+ * were added.
  *
  * <p>{@code @Transactional} keeps the Hibernate session open for the lazy
  * {@code Role.permissions} collection — safe here because, unlike
@@ -66,7 +72,8 @@ class RoleSeedDataTests {
             "DOCUMENT_READ", "DOCUMENT_UPLOAD", "DOCUMENT_DELETE", "AI_USE", "USER_MANAGE",
             "PRODUCT_READ", "PRODUCT_CREATE", "PRODUCT_UPDATE", "PRODUCT_DELETE",
             "INVOICE_READ", "INVOICE_CREATE", "INVOICE_UPDATE", "INVOICE_DELETE",
-            "TASK_READ", "TASK_CREATE", "TASK_UPDATE", "TASK_DELETE"
+            "TASK_READ", "TASK_CREATE", "TASK_UPDATE", "TASK_DELETE",
+            "ANALYTICS_READ"
     );
 
     @Autowired
@@ -111,7 +118,7 @@ class RoleSeedDataTests {
                 "DOCUMENT_READ", "DOCUMENT_UPLOAD", "DOCUMENT_DELETE", "AI_USE",
                 "PRODUCT_READ", "PRODUCT_CREATE", "PRODUCT_UPDATE", "PRODUCT_DELETE",
                 "INVOICE_READ", "INVOICE_CREATE", "INVOICE_UPDATE", "INVOICE_DELETE",
-                "TASK_READ", "TASK_CREATE", "TASK_UPDATE", "TASK_DELETE");
+                "TASK_READ", "TASK_CREATE", "TASK_UPDATE", "TASK_DELETE", "ANALYTICS_READ");
     }
 
     @Test
@@ -126,7 +133,7 @@ class RoleSeedDataTests {
                 "DOCUMENT_READ", "DOCUMENT_UPLOAD", "AI_USE",
                 "PRODUCT_READ", "PRODUCT_CREATE", "PRODUCT_UPDATE",
                 "INVOICE_READ", "INVOICE_CREATE", "INVOICE_UPDATE",
-                "TASK_READ", "TASK_CREATE", "TASK_UPDATE");
+                "TASK_READ", "TASK_CREATE", "TASK_UPDATE", "ANALYTICS_READ");
         assertThat(permissions).doesNotContain(
                 "CUSTOMER_DELETE", "LEAD_DELETE", "QUOTATION_DELETE", "PRODUCT_DELETE", "INVOICE_DELETE",
                 "TASK_DELETE", "DOCUMENT_DELETE", "USER_MANAGE");
@@ -146,7 +153,7 @@ class RoleSeedDataTests {
 
         assertThat(permissions).containsExactlyInAnyOrder(
                 "CUSTOMER_READ", "LEAD_READ", "QUOTATION_READ", "DOCUMENT_READ", "AI_USE", "PRODUCT_READ",
-                "INVOICE_READ", "TASK_READ", "TASK_CREATE", "TASK_UPDATE");
+                "INVOICE_READ", "TASK_READ", "TASK_CREATE", "TASK_UPDATE", "ANALYTICS_READ");
         assertThat(permissions).doesNotContain("TASK_DELETE", "DOCUMENT_UPLOAD", "DOCUMENT_DELETE");
     }
 
