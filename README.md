@@ -4,7 +4,7 @@ BizPilot AI is an AI-powered business operations platform for small and medium b
 
 This is being built as a production-grade, multi-tenant SaaS application — not a prototype.
 
-> **Status:** Phase 1 — repository structure and documentation only. No business functionality has been implemented yet. See [docs/roadmap.md](docs/roadmap.md) for the full build plan.
+> **Status:** Phases 1–19 (backend) complete, production-audited, and tested. Phase 20 (frontend foundation) complete. See [docs/roadmap.md](docs/roadmap.md) for the full build plan and current progress.
 
 ---
 
@@ -489,7 +489,32 @@ curl -s http://localhost:8080/api/v1/analytics/summary \
 
 ## Running the Frontend
 
-Not yet available. Will be documented starting in Phase 20 once the Vite project is scaffolded (`cd frontend && npm install && npm run dev`).
+Phase 20 scaffolds the frontend foundation: React + TypeScript + Vite, Tailwind CSS, the design system, the application shell (sidebar/top bar/mobile drawer), authentication, RBAC-aware navigation, and the dashboard KPI cards (`GET /api/v1/analytics/summary`). Every other module (Customers, Leads, Products, Quotations, Invoices, Tasks, Documents, AI Assistant) is an honest "coming in a later phase" placeholder behind its real nav link — see [docs/roadmap.md](docs/roadmap.md) for the exact frontend phase plan.
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local   # VITE_API_BASE_URL=http://localhost:8080 by default
+npm run dev                  # http://localhost:5173, matches the backend's CORS_ALLOWED_ORIGINS default
+```
+
+The backend must already be running (see [Running the Backend](#running-the-backend)) — the frontend has no mock/fake backend mode. Token storage is memory-only (never `localStorage`); a full page reload always returns to `/auth/login`, since the current backend hands both tokens back in a JSON body rather than an httpOnly refresh cookie.
+
+```bash
+npm run build   # tsc -b && vite build — production bundle in dist/
+npm run test    # Vitest + React Testing Library
+npm run lint    # ESLint
+```
+
+### Browser Smoke Tests (Playwright)
+
+```bash
+npm run test:e2e          # headless
+npm run test:e2e:headed   # watch it run in a real browser window
+npm run test:e2e:report   # open the last HTML report
+```
+
+`npm run test:e2e` starts the Vite dev server itself (Playwright's `webServer` config), waits until it's reachable, launches Chromium, runs the smoke suite (`frontend/e2e/`), captures screenshots at the required breakpoints into `test-results/screenshots/` (gitignored), generates an HTML report (`playwright-report/`, gitignored), and shuts the dev server down automatically — no manual browser or backend setup needed. Every test mocks the backend entirely at the browser network layer (`page.route`, see `e2e/mocks.ts`) with realistic fixtures for all seven analytics metrics; a real backend is never required for this suite, and no production/API code is touched by the mocks. This is a lightweight foundation-verification layer (auth, dashboard, navigation, responsive, basic accessibility) — the full Phase 26 E2E strategy (complete Customer/Lead/Quotation/Invoice/Document/AI flows, a role matrix, performance, visual regression) is a separate, later scope.
 
 ## Running with Docker
 

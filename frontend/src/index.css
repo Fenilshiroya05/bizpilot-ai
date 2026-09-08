@@ -1,0 +1,134 @@
+@import 'tailwindcss';
+
+/*
+ * BizPilot AI design tokens — the single source of truth for color, radius,
+ * and font. Feature code must never reach for a raw hex value; it reaches
+ * for one of these semantic names (e.g. `bg-background`, `text-muted-foreground`,
+ * `border-border`) so the whole product can be re-themed from this one file.
+ */
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --color-background: #ffffff;
+  --color-foreground: #16181d;
+
+  --color-surface: #fafafa;
+  --color-surface-foreground: #16181d;
+
+  --color-muted: #f1f2f4;
+  --color-muted-foreground: #6b7280;
+
+  --color-border: #e5e7eb;
+  --color-ring: #1d4ed8;
+
+  --color-primary: #1d4ed8;
+  --color-primary-foreground: #ffffff;
+
+  --color-secondary: #f1f2f4;
+  --color-secondary-foreground: #16181d;
+
+  --color-success: #16a34a;
+  --color-success-foreground: #ffffff;
+
+  --color-warning: #b45309;
+  --color-warning-foreground: #ffffff;
+
+  --color-destructive: #dc2626;
+  --color-destructive-foreground: #ffffff;
+
+  --color-info: #0369a1;
+  --color-info-foreground: #ffffff;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* Subtle, functional motion only (CLAUDE.md §25/§34) — no animation
+     library; a fade for overlays/popovers, a slide for the mobile drawer.
+     `prefers-reduced-motion` is handled globally below. */
+  --animate-fade-in: fade-in 150ms ease-out;
+  --animate-fade-out: fade-out 120ms ease-in;
+  --animate-slide-in-left: slide-in-left 200ms ease-out;
+  --animate-slide-out-left: slide-out-left 180ms ease-in;
+  --animate-slide-in-right: slide-in-right 200ms ease-out;
+  --animate-slide-out-right: slide-out-right 180ms ease-in;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes slide-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes slide-out-left {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes slide-out-right {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    color-scheme: light;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

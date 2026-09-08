@@ -1,0 +1,135 @@
+import { expect, test } from '@playwright/test'
+
+import { loginViaUi, mockAuthenticatedSession } from './mocks'
+import { attachConsoleGuard, horizontalOverflowPx } from './sanity'
+
+const DESKTOP_BREAKPOINTS = [
+  { width: 1440, height: 900 },
+  { width: 1280, height: 800 },
+  { width: 1024, height: 768 },
+]
+
+const MOBILE_BREAKPOINTS = [
+  { width: 768, height: 1024 },
+  { width: 390, height: 844 },
+  { width: 375, height: 812 },
+]
+
+test.describe('responsive — desktop', () => {
+  for (const { width, height } of DESKTOP_BREAKPOINTS) {
+    test(`dashboard at ${width}x${height}: sidebar visible, no horizontal overflow`, async ({ page }) => {
+      await page.setViewportSize({ width, height })
+      await mockAuthenticatedSession(page)
+      await loginViaUi(page)
+
+      await expect(page.getByRole('complementary')).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Open navigation menu' })).not.toBeVisible()
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+
+      await page.screenshot({ path: `test-results/screenshots/dashboard-${width}x${height}.png`, fullPage: true })
+    })
+  }
+})
+
+test.describe('responsive — mobile/tablet', () => {
+  for (const { width, height } of MOBILE_BREAKPOINTS) {
+    test(`dashboard at ${width}x${height}: drawer navigation replaces the sidebar`, async ({ page }) => {
+      await page.setViewportSize({ width, height })
+      const guard = attachConsoleGuard(page)
+      await mockAuthenticatedSession(page)
+      await loginViaUi(page)
+
+      await expect(page.getByRole('complementary')).not.toBeVisible()
+      const menuButton = page.getByRole('button', { name: 'Open navigation menu' })
+      await expect(menuButton).toBeVisible()
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+
+      await page.screenshot({ path: `test-results/screenshots/dashboard-${width}x${height}.png`, fullPage: true })
+      expect(guard.errors, `console errors: ${guard.errors.join('; ')}`).toEqual([])
+    })
+  }
+
+  test('the mobile drawer opens, is keyboard-navigable, and closes on Escape with focus restored', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await mockAuthenticatedSession(page)
+    await loginViaUi(page)
+
+    const menuButton = page.getByRole('button', { name: 'Open navigation menu' })
+    await menuButton.focus()
+    await page.keyboard.press('Enter')
+
+    const drawer = page.getByRole('dialog', { name: 'Navigation' })
+    await expect(drawer).toBeVisible()
+
+    // Focus should have moved into the drawer (Radix Dialog default behavior).
+    const focusedInDrawer = await page.evaluate(() => {
+      const dialog = document.querySelector('[role="dialog"]')
+      return dialog?.contains(document.activeElement) ?? false
+    })
+    expect(focusedInDrawer).toBe(true)
+
+    await expect(drawer.getByRole('link', { name: 'Dashboard' })).toBeVisible()
+
+    await page.keyboard.press('Escape')
+    await expect(drawer).not.toBeVisible()
+    await expect(menuButton).toBeFocused()
+  })
+
+  test('clicking the backdrop closes the mobile drawer', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await mockAuthenticatedSession(page)
+    await loginViaUi(page)
+
+    await page.getByRole('button', { name: 'Open navigation menu' }).click()
+    const drawer = page.getByRole('dialog', { name: 'Navigation' })
+    await expect(drawer).toBeVisible()
+
+    // Click far outside the drawer panel (which is anchored to the left edge).
+    await page.mouse.click(page.viewportSize()!.width - 10, page.viewportSize()!.height / 2)
+    await expect(drawer).not.toBeVisible()
+  })
+
+  test('navigating from the mobile drawer closes it and renders the destination', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await mockAuthenticatedSession(page)
+    await loginViaUi(page)
+
+    await page.getByRole('button', { name: 'Open navigation menu' }).click()
+    const drawer = page.getByRole('dialog', { name: 'Navigation' })
+    await drawer.getByRole('link', { name: 'Settings' }).click()
+
+    await expect(drawer).not.toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+  })
+})
+
+test.describe('responsive — login and settings screenshots', () => {
+  test('login page at 1440x900 and 390x844', async ({ page }) => {
+    for (const { width, height } of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize({ width, height })
+      await page.goto('/auth/login')
+      await expect(page.getByLabel('Email')).toBeVisible()
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/login-${width}x${height}.png`, fullPage: true })
+    }
+  })
+
+  test('settings page at 1440x900 and 390x844', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await loginViaUi(page)
+
+    // Navigate via the sidebar link once (SPA client-side routing) — tokens
+    // are memory-only, so a page.goto()/reload between viewports would lose
+    // the session. Resizing the already-loaded page is the realistic
+    // equivalent of a user resizing their window.
+    await page.getByRole('complementary').getByRole('link', { name: 'Settings' }).click()
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+
+    for (const { width, height } of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize({ width, height })
+      await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/settings-${width}x${height}.png`, fullPage: true })
+    }
+  })
+})

@@ -1,0 +1,114 @@
+import { lazy, Suspense } from 'react'
+import { createBrowserRouter, Navigate } from 'react-router-dom'
+
+import { useAuth } from '@/app/providers/AuthProvider'
+import { RequireAuth, RequirePermission } from '@/app/guards'
+import { AppShell } from '@/components/layout/AppShell'
+import { ComingSoon } from '@/components/feedback/ComingSoon'
+import { Skeleton } from '@/components/ui/skeleton'
+
+const LoginPage = lazy(() =>
+  import('@/features/auth/LoginPage').then((m) => ({ default: m.LoginPage })),
+)
+const RegisterPage = lazy(() =>
+  import('@/features/auth/RegisterPage').then((m) => ({ default: m.RegisterPage })),
+)
+const DashboardPage = lazy(() =>
+  import('@/features/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
+)
+const SettingsPage = lazy(() =>
+  import('@/features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })),
+)
+
+function PageFallback() {
+  return (
+    <div className="space-y-4">
+      <Skeleton className="h-8 w-48" />
+      <Skeleton className="h-40 w-full" />
+    </div>
+  )
+}
+
+function withSuspense(element: React.ReactNode) {
+  return <Suspense fallback={<PageFallback />}>{element}</Suspense>
+}
+
+function RootRedirect() {
+  const { isAuthenticated } = useAuth()
+  return <Navigate to={isAuthenticated ? '/dashboard' : '/auth/login'} replace />
+}
+
+export const router = createBrowserRouter([
+  { path: '/', element: <RootRedirect /> },
+  { path: '/auth/login', element: withSuspense(<LoginPage />) },
+  { path: '/auth/register', element: withSuspense(<RegisterPage />) },
+  {
+    element: <RequireAuth />,
+    children: [
+      {
+        element: <AppShell />,
+        children: [
+          { path: '/dashboard', element: withSuspense(<DashboardPage />) },
+          {
+            path: '/customers',
+            element: (
+              <RequirePermission permission="CUSTOMER_READ">
+                <ComingSoon title="Customers" phase="Phase 21" />
+              </RequirePermission>
+            ),
+          },
+          {
+            path: '/leads',
+            element: (
+              <RequirePermission permission="LEAD_READ">
+                <ComingSoon title="Leads" phase="Phase 21" />
+              </RequirePermission>
+            ),
+          },
+          {
+            path: '/products',
+            element: (
+              <RequirePermission permission="PRODUCT_READ">
+                <ComingSoon title="Products" phase="Phase 22" />
+              </RequirePermission>
+            ),
+          },
+          {
+            path: '/quotations',
+            element: (
+              <RequirePermission permission="QUOTATION_READ">
+                <ComingSoon title="Quotations" phase="Phase 22" />
+              </RequirePermission>
+            ),
+          },
+          {
+            path: '/invoices',
+            element: (
+              <RequirePermission permission="INVOICE_READ">
+                <ComingSoon title="Invoices" phase="Phase 23" />
+              </RequirePermission>
+            ),
+          },
+          {
+            path: '/tasks',
+            element: (
+              <RequirePermission permission="TASK_READ">
+                <ComingSoon title="Tasks" phase="Phase 23" />
+              </RequirePermission>
+            ),
+          },
+          {
+            path: '/documents',
+            element: (
+              <RequirePermission permission="DOCUMENT_READ">
+                <ComingSoon title="Documents" phase="Phase 24" />
+              </RequirePermission>
+            ),
+          },
+          { path: '/settings', element: withSuspense(<SettingsPage />) },
+        ],
+      },
+    ],
+  },
+  { path: '*', element: <RootRedirect /> },
+])
