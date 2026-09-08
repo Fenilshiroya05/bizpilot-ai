@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -44,16 +45,32 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
      * precedent. All filters are optional (a {@code null} parameter matches
      * every value); pagination happens entirely at the database level.
      */
+    /**
+     * {@code statuses} (Phase 17, project instructions §17) is an
+     * additional, independent status-<em>set</em> filter alongside the
+     * existing single-value {@code status} — {@code ai.tools.InvoiceTools}
+     * is the only caller that ever populates it (with
+     * {@code ISSUED}/{@code PARTIALLY_PAID}/{@code OVERDUE}), always passing
+     * {@code null} for {@code status} in that call; every existing caller
+     * (the REST search endpoint) continues to pass {@code null} for {@code
+     * statuses}, so this clause never applies to it. {@code :statuses IS
+     * NULL OR ...} is the same "optional filter" idiom already used for
+     * every other parameter here — verified (Phase 17 implementation) to
+     * bind a null {@code List} parameter correctly against a real
+     * PostgreSQL/Testcontainers database, not assumed.
+     */
     @Query("""
             SELECT i FROM Invoice i
             WHERE i.organization.id = :organizationId
               AND (:status IS NULL OR i.status = :status)
+              AND (:statuses IS NULL OR i.status IN :statuses)
               AND (:customerId IS NULL OR i.customer.id = :customerId)
               AND (:dueDateBefore IS NULL
                    OR (i.dueDate IS NOT NULL AND i.dueDate <= :dueDateBefore))
             """)
     Page<Invoice> search(@Param("organizationId") UUID organizationId,
                           @Param("status") InvoiceStatus status,
+                          @Param("statuses") List<InvoiceStatus> statuses,
                           @Param("customerId") UUID customerId,
                           @Param("dueDateBefore") LocalDate dueDateBefore,
                           Pageable pageable);

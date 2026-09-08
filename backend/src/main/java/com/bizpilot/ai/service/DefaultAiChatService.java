@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 
 /**
  * Default {@link AiChatService} implementation, built directly on Spring
@@ -73,6 +74,37 @@ public class DefaultAiChatService implements AiChatService {
             ChatResponse response = chatClient.prompt()
                     .system(systemPrompt)
                     .user(userMessage)
+                    .call()
+                    .chatResponse();
+            logOutcome(true, response, start, null);
+            return response.getResult().getOutput().getText();
+        } catch (RuntimeException e) {
+            logOutcome(false, null, start, e);
+            throw new AiProviderException("AI chat request failed", e);
+        }
+    }
+
+    /**
+     * Phase 17 addition — deliberately its own method body again, for the
+     * same reason {@link #chat(String, String)} is separate from {@link
+     * #chat(String)}: {@code .tools(...)} is the only difference from
+     * {@link #chat(String, String)}, verified against the actual Spring AI
+     * 1.1.8 {@code ChatClient.ChatClientRequestSpec} API (a plain {@code
+     * Object...} varargs method — the exact mechanism {@code
+     * MethodToolCallbackProvider} also uses to wrap {@code @Tool}-annotated
+     * beans, see {@code ToolSecurityEnforcementTest}). This class never
+     * inspects {@code tools}, never decides whether/which tool is called —
+     * that is entirely Spring AI's and, per tool, {@code @PreAuthorize}'s
+     * responsibility.
+     */
+    @Override
+    public String chat(String systemPrompt, String userMessage, List<Object> tools) {
+        Instant start = Instant.now();
+        try {
+            ChatResponse response = chatClient.prompt()
+                    .system(systemPrompt)
+                    .user(userMessage)
+                    .tools(tools.toArray())
                     .call()
                     .chatResponse();
             logOutcome(true, response, start, null);

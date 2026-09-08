@@ -81,7 +81,7 @@ public class InvoiceController {
             @RequestParam(required = false) UUID customerId,
             @RequestParam(required = false) LocalDate dueDateBefore,
             @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        InvoiceSearchCriteria criteria = new InvoiceSearchCriteria(status, customerId, dueDateBefore);
+        InvoiceSearchCriteria criteria = new InvoiceSearchCriteria(status, customerId, dueDateBefore, null);
         return invoiceService.search(criteria, pageable).map(invoiceMapper::toSummaryResponse);
     }
 

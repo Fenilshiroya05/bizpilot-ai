@@ -322,11 +322,11 @@ class InvoiceServiceTest {
     void searchDelegatesToTheRepositoryWithTheCurrentOrganizationId() {
         Pageable pageable = PageRequest.of(0, 20);
         Page<Invoice> emptyPage = new PageImpl<>(List.of());
-        when(invoiceRepository.search(eq(organizationId), any(), any(), any(), eq(pageable))).thenReturn(emptyPage);
+        when(invoiceRepository.search(eq(organizationId), any(), any(), any(), any(), eq(pageable))).thenReturn(emptyPage);
 
-        InvoiceSearchCriteria criteria = new InvoiceSearchCriteria(null, null, null);
+        InvoiceSearchCriteria criteria = new InvoiceSearchCriteria(null, null, null, null);
         service().search(criteria, pageable);
 
-        verify(invoiceRepository).search(eq(organizationId), any(), any(), any(), eq(pageable));
+        verify(invoiceRepository).search(eq(organizationId), any(), any(), any(), any(), eq(pageable));
     }
 }

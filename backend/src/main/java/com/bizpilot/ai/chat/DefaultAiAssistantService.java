@@ -6,6 +6,10 @@ import com.bizpilot.ai.exception.AiDisabledException;
 import com.bizpilot.ai.retrieval.DocumentRetrievalService;
 import com.bizpilot.ai.retrieval.RetrievedChunk;
 import com.bizpilot.ai.service.AiChatService;
+import com.bizpilot.ai.tools.CustomerTools;
+import com.bizpilot.ai.tools.InvoiceTools;
+import com.bizpilot.ai.tools.LeadTools;
+import com.bizpilot.ai.tools.ProductTools;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -51,14 +55,37 @@ public class DefaultAiAssistantService implements AiAssistantService {
     private final AssistantContextBuilder contextBuilder;
     private final AssistantPromptService promptService;
 
+    /**
+     * Phase 17 (CLAUDE.md §19) — the fixed, locked tool set, constructor-
+     * injected as plain beans (never a dynamic registry/plugin marketplace,
+     * project instructions §21). Each is unconditional — a {@code
+     * @Component} with no AI-gated dependency of its own — so it exists
+     * regardless of {@code bizpilot.ai.enabled}; only passing them to
+     * {@link AiChatService#chat(String, String, List)} ever makes them
+     * reachable at all, and that only happens once AI is confirmed enabled
+     * below.
+     */
+    private final CustomerTools customerTools;
+    private final LeadTools leadTools;
+    private final ProductTools productTools;
+    private final InvoiceTools invoiceTools;
+
     public DefaultAiAssistantService(ObjectProvider<DocumentRetrievalService> documentRetrievalService,
                                       ObjectProvider<AiChatService> aiChatService,
                                       AssistantContextBuilder contextBuilder,
-                                      AssistantPromptService promptService) {
+                                      AssistantPromptService promptService,
+                                      CustomerTools customerTools,
+                                      LeadTools leadTools,
+                                      ProductTools productTools,
+                                      InvoiceTools invoiceTools) {
         this.documentRetrievalService = documentRetrievalService;
         this.aiChatService = aiChatService;
         this.contextBuilder = contextBuilder;
         this.promptService = promptService;
+        this.customerTools = customerTools;
+        this.leadTools = leadTools;
+        this.productTools = productTools;
+        this.invoiceTools = invoiceTools;
     }
 
     @Override
@@ -84,7 +111,8 @@ public class DefaultAiAssistantService implements AiAssistantService {
 
         String context = contextBuilder.build(chunks);
         String userMessage = message + "\n\n" + context;
-        String answer = chat.chat(promptService.systemPrompt(), userMessage);
+        List<Object> tools = List.of(customerTools, leadTools, productTools, invoiceTools);
+        String answer = chat.chat(promptService.systemPrompt(), userMessage, tools);
 
         long durationMs = Duration.between(start, Instant.now()).toMillis();
         log.info("AI assistant request succeeded [resultCount={}, durationMs={}]", chunks.size(), durationMs);

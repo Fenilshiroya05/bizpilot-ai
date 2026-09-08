@@ -1,16 +1,17 @@
 # AI Architecture
 
-> Status: Phase 16 — the first real AI Assistant + RAG Chat capability exists: `POST /api/v1/ai/chat`. RAG-only (§2's "no hallucinated business data" now has a real enforcement point), stateless, no tool calling, no conversation persistence. Action confirmation, structured output/lead scoring, and any business-data tool remain target architecture, not yet implemented — see §0 below for exactly what's real today.
+> Status: Phase 17 — `POST /api/v1/ai/chat` now supports read-only business-data tool calling in addition to RAG (§2's "search structured business data via approved tools" now has a real, if read-only, implementation). Stateless, no conversation persistence. Mutating tools (create/update/delete), action confirmation, structured output/lead scoring, and multi-tool orchestration beyond a fixed four-tool set remain target architecture, not yet implemented — see §0 below for exactly what's real today.
 
-## 0. Implementation Status (Phase 16)
+## 0. Implementation Status (Phase 17)
 
 What actually exists today, as opposed to the target design described in §1–§9 below:
 
 - **Real (Phase 14)**: `ai/config/AiProperties` + `AiConfiguration`, `ai/service/AiChatService` + `DefaultAiChatService` (wraps Spring AI's `ChatClient`), `ai/service/AiEmbeddingService` + `DefaultAiEmbeddingService` (wraps `EmbeddingModel`), `ai/exception/AiProviderException`. Provider: OpenAI only. Disabled by default — no OpenAI API key is required to build, test, or start the application.
 - **Real (Phase 15)**: the full RAG pipeline (§3) — text extraction → `TokenTextSplitter` chunking (no overlap, a disclosed pinned-version limitation) → `AiEmbeddingService.embedBatch` → Spring AI `PgVectorStore`, triggered asynchronously after upload, with a recovery sweep. `ai/retrieval/DocumentRetrievalService` is tenant-scoped and fails closed.
-- **Real (Phase 16) — the AI assistant, previously entirely target architecture, is now a real, minimal, RAG-only implementation**: `ai/chat/{AiAssistantService, DefaultAiAssistantService, AssistantContextBuilder, AssistantPromptService, controller/AiAssistantController, dto/*}`. `AiChatService` gained a `chat(systemPrompt, userMessage)` overload — the system/user role separation is the real prompt-injection boundary (§8's "must never be able to alter system instructions" now has a concrete mechanism, not just a principle). The system prompt (§7) now lives at `prompts/assistant-system-v1.txt`, the first real file in that placeholder directory. Sources (§2's "explain the source of important document-based answers") are backend-generated from the same `RetrievedChunk`s retrieval already returns — never LLM-generated.
-- **Not yet real**: tool calling (§4), action confirmation (§5), structured output / lead scoring (§6), conversation persistence, streaming, and any UI. These remain exactly as designed below — the assistant today is strictly "retrieve, ground, answer, cite," with no capability to call a tool or take an action, by design (CLAUDE.md's own phase ordering).
-- **Full implementation account**: see [architecture.md §1o](architecture.md) and [security.md §3n](security.md#3n-implementation-notes-phase-16--ai-assistant-role-separation-as-the-prompt-injection-boundary-and-the-deliberately-not-added-illegalstateexception-handler) (role separation verified against actual Spring AI 1.1.8 source, the documented `DOCUMENT_READ`/`AI_USE` coupling, and why no blanket `IllegalStateException` handler was introduced).
+- **Real (Phase 16)**: `ai/chat/{AiAssistantService, DefaultAiAssistantService, AssistantContextBuilder, AssistantPromptService, controller/AiAssistantController, dto/*}`. `AiChatService` gained a `chat(systemPrompt, userMessage)` overload — the system/user role separation is the real prompt-injection boundary (§8's "must never be able to alter system instructions" now has a concrete mechanism, not just a principle). The system prompt (§7) now lives at `prompts/assistant-system-v1.txt`. Sources (§2's "explain the source of important document-based answers") are backend-generated from the same `RetrievedChunk`s retrieval already returns — never LLM-generated.
+- **Real (Phase 17) — read-only tool calling, previously entirely target architecture, is now a real, minimal implementation of §4's "search structured business data via approved tools"**: `ai/tools/{CustomerTools, LeadTools, ProductTools, InvoiceTools}` (all `@Component`, four `*_READ`-permission-gated tools total — see §4 below for the exact list and why the rest of §4's originally-planned list remains unbuilt). `AiChatService` gained a second overload, `chat(systemPrompt, userMessage, List<Object> tools)`; `DefaultAiAssistantService` passes the fixed four-tool-bean list to every chat call. A custom `ai/config/AiToolExecutionConfig` (`ToolExecutionExceptionProcessor`) ensures a denied/failed tool call never leaks a raw exception message/class to the model. Full account: [roadmap.md — Phase 17](roadmap.md).
+- **Not yet real**: mutating tools (§4's `createTask`/`createQuotation`), `getSalesSummary` (an analytics aggregation, deliberately deferred), action confirmation (§5), structured output / lead scoring (§6), conversation persistence, streaming, multi-turn tool chaining, and any UI. The assistant today can retrieve documents (RAG) and read four kinds of business records (customers, leads, products, invoices) — it cannot create, update, delete, or take any action, by design (CLAUDE.md's own phase ordering).
+- **Full implementation account**: see [architecture.md §1o](architecture.md) and [security.md §3n](security.md#3n-implementation-notes-phase-16--ai-assistant-role-separation-as-the-prompt-injection-boundary-and-the-deliberately-not-added-illegalstateexception-handler)/[§3o](security.md#3o-implementation-notes-phase-17--read-only-ai-tool-calling-preauthorize-verified-as-the-real-enforcement-mechanism) (role separation, the `@PreAuthorize`-on-tool-method security spike, and the `AI_USE`-is-insufficient design).
 
 ## 1. Principles
 
@@ -72,26 +73,29 @@ Tenant isolation is enforced at retrieval time: a similarity search **must** fil
 
 ## 4. Tool Calling
 
-The assistant uses Spring AI's tool-calling support to invoke a fixed set of backend tools rather than freeform actions. Planned initial tools:
+The assistant uses Spring AI's tool-calling support (`MethodToolCallbackProvider`, the mechanism behind `ChatClient.tools(Object...)`) to invoke a fixed set of backend tools rather than freeform actions.
 
-- `searchCustomers`, `getCustomer`
-- `searchLeads`, `getLead`
-- `searchProducts`
-- `getSalesSummary`
-- `getOutstandingInvoices`
-- `createTask`
-- `createQuotation`
-- `getCustomerHistory`
+**Implemented (Phase 17), all read-only:**
 
-Every tool invocation must:
+- `CustomerTools.searchCustomers`, `.getCustomer`, `.getCustomerHistory` — requires `CUSTOMER_READ`
+- `LeadTools.searchLeads`, `.getLead` — requires `LEAD_READ`
+- `ProductTools.searchProducts` — requires `PRODUCT_READ`
+- `InvoiceTools.getOutstandingInvoices` — requires `INVOICE_READ`
 
-1. Validate input (schema/shape).
-2. Validate the authenticated user and their organization.
-3. Validate the caller has the required permission (RBAC).
-4. Apply the same business rules the equivalent REST endpoint would apply.
-5. Execute through the existing application **service** layer (never a repository directly).
-6. Log the call (`ai_tool_calls`) — inputs, result, outcome.
-7. Return a structured result to the model.
+**Planned, not yet implemented** (a later phase, alongside §5's confirmation flow, since every one of these either mutates data or aggregates across records):
+
+- `getSalesSummary` (an analytics aggregation — deliberately deferred, not a §17 read-only single-entity lookup)
+- `createTask`, `createQuotation` (mutating — require the §5 confirmation flow first)
+
+Every tool invocation must, and every implemented tool above does:
+
+1. Validate input (schema/shape) — free-text queries are checked non-blank and length-bounded; IDs must be valid UUIDs.
+2. Validate the authenticated user and their organization — inherited for free from the domain service's own `TenantContext` resolution; no tool accepts an organization/tenant id as a parameter.
+3. Validate the caller has the required permission (RBAC) — `@PreAuthorize("hasAuthority('...')")` directly on the tool method, empirically verified to be enforced when Spring AI invokes the bean (see [security.md §3o](security.md#3o-implementation-notes-phase-17--read-only-ai-tool-calling-preauthorize-verified-as-the-real-enforcement-mechanism)). Never `AI_USE` alone.
+4. Apply the same business rules the equivalent REST endpoint would apply — each tool calls the same service method the REST controller calls (e.g. `CustomerService.search`), never a parallel implementation.
+5. Execute through the existing application **service** layer (never a repository directly) — true for all four implemented tools.
+6. Return a structured result to the model — a small tool-facing DTO (e.g. `CustomerToolResult`), never a raw JPA entity; not-found/cross-tenant lookups return a normal `found=false` result, never an exception, so a denied or missing record is never distinguishable from the other.
+7. **Not yet implemented: a persisted `ai_tool_calls` audit table.** Phase 17 logs each call at `INFO` (tool name, result count, duration — metadata only, never query text or record contents) via the existing structured-logging convention; a dedicated database-backed audit trail remains target architecture for a later phase, consistent with `audit_logs` more broadly (see [security.md](security.md)).
 
 ## 5. Action Confirmation
 

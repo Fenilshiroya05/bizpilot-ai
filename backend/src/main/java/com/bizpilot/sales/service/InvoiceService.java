@@ -98,8 +98,26 @@ public class InvoiceService {
     @Transactional(readOnly = true)
     public Page<Invoice> search(InvoiceSearchCriteria criteria, Pageable pageable) {
         return invoiceRepository.search(
-                tenantContext.currentOrganizationId(), criteria.status(), criteria.customerId(),
+                tenantContext.currentOrganizationId(), criteria.status(), criteria.statuses(), criteria.customerId(),
                 criteria.dueDateBefore(), pageable);
+    }
+
+    /**
+     * "Outstanding" (Phase 17, project instructions §17): {@code ISSUED},
+     * {@code PARTIALLY_PAID}, or {@code OVERDUE} — CLAUDE.md §15's own
+     * status enum values representing an invoice still owed, in whole or in
+     * part. Deliberately a domain-service method, not tool-layer logic
+     * (project instructions §12: "tools must not contain business logic
+     * that duplicates domain services") — {@code ai.tools.InvoiceTools} only
+     * calls this and maps the result; the definition of "outstanding" lives
+     * here, the one place any future caller (REST or AI) would look for it.
+     */
+    private static final List<InvoiceStatus> OUTSTANDING_STATUSES =
+            List.of(InvoiceStatus.ISSUED, InvoiceStatus.PARTIALLY_PAID, InvoiceStatus.OVERDUE);
+
+    @Transactional(readOnly = true)
+    public Page<Invoice> getOutstanding(Pageable pageable) {
+        return search(new InvoiceSearchCriteria(null, null, null, OUTSTANDING_STATUSES), pageable);
     }
 
     @Transactional

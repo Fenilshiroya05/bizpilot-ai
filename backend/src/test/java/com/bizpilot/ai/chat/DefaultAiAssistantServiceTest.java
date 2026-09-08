@@ -7,6 +7,10 @@ import com.bizpilot.ai.exception.AiProviderException;
 import com.bizpilot.ai.retrieval.DocumentRetrievalService;
 import com.bizpilot.ai.retrieval.RetrievedChunk;
 import com.bizpilot.ai.service.AiChatService;
+import com.bizpilot.ai.tools.CustomerTools;
+import com.bizpilot.ai.tools.InvoiceTools;
+import com.bizpilot.ai.tools.LeadTools;
+import com.bizpilot.ai.tools.ProductTools;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
@@ -17,7 +21,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -29,9 +36,10 @@ import static org.mockito.Mockito.when;
  * Pure Mockito orchestration tests for {@link DefaultAiAssistantService} —
  * no Spring context, no real retrieval, no real OpenAI call. The most
  * security-critical assertions here (prompt-injection role separation,
- * zero-result short-circuit, fail-closed propagation) are exactly the ones
- * project instructions §35/§36/§39 ask for; the equivalent live,
- * Testcontainers-backed versions are in {@code AiAssistantSecurityTests}.
+ * zero-result short-circuit, fail-closed propagation, tool wiring) are
+ * exactly the ones project instructions §35/§36/§39 ask for; the
+ * equivalent live, Testcontainers-backed versions are in {@code
+ * AiAssistantSecurityTests}/{@code AiToolsIntegrationTests}.
  */
 class DefaultAiAssistantServiceTest {
 
@@ -39,16 +47,21 @@ class DefaultAiAssistantServiceTest {
     private final AiChatService aiChatService = mock(AiChatService.class);
     private final AssistantContextBuilder contextBuilder = new AssistantContextBuilder();
     private final AssistantPromptService promptService = mock(AssistantPromptService.class);
+    private final CustomerTools customerTools = mock(CustomerTools.class);
+    private final LeadTools leadTools = mock(LeadTools.class);
+    private final ProductTools productTools = mock(ProductTools.class);
+    private final InvoiceTools invoiceTools = mock(InvoiceTools.class);
 
     private DefaultAiAssistantService service() {
         return new DefaultAiAssistantService(
                 objectProviderOf(documentRetrievalService), objectProviderOf(aiChatService),
-                contextBuilder, promptService);
+                contextBuilder, promptService, customerTools, leadTools, productTools, invoiceTools);
     }
 
     private DefaultAiAssistantService serviceWithAiDisabled() {
         return new DefaultAiAssistantService(
-                objectProviderOf(null), objectProviderOf(null), contextBuilder, promptService);
+                objectProviderOf(null), objectProviderOf(null), contextBuilder, promptService,
+                customerTools, leadTools, productTools, invoiceTools);
     }
 
     @Test
@@ -78,7 +91,8 @@ class DefaultAiAssistantServiceTest {
                 "migration-guide.pdf", "application/pdf", 0.87);
         when(documentRetrievalService.search("What are the migration steps?", 5)).thenReturn(List.of(chunk));
         when(promptService.systemPrompt()).thenReturn("TRUSTED_SYSTEM_PROMPT");
-        when(aiChatService.chat(eq("TRUSTED_SYSTEM_PROMPT"), anyString())).thenReturn("Back up the database first.");
+        when(aiChatService.chat(eq("TRUSTED_SYSTEM_PROMPT"), anyString(), anyList()))
+                .thenReturn("Back up the database first.");
 
         AiChatResponse response = service().ask("What are the migration steps?");
 
@@ -92,14 +106,32 @@ class DefaultAiAssistantServiceTest {
                 "guide.pdf", "text/plain", 0.5);
         when(documentRetrievalService.search(anyString(), anyInt())).thenReturn(List.of(chunk));
         when(promptService.systemPrompt()).thenReturn("SYSTEM");
-        when(aiChatService.chat(anyString(), anyString())).thenReturn("answer");
+        when(aiChatService.chat(anyString(), anyString(), anyList())).thenReturn("answer");
 
         service().ask("What does the guide say?");
 
-        verify(aiChatService).chat(eq("SYSTEM"), org.mockito.ArgumentMatchers.argThat(userMessage ->
+        verify(aiChatService).chat(eq("SYSTEM"), argThat(userMessage ->
                 userMessage.contains("What does the guide say?")
                         && userMessage.contains("<document_context>")
-                        && userMessage.contains("relevant content")));
+                        && userMessage.contains("relevant content")), anyList());
+    }
+
+    @Test
+    void theFixedToolSetIsPassedToEveryChatCall() {
+        RetrievedChunk chunk = new RetrievedChunk(UUID.randomUUID(), UUID.randomUUID(), 0, "content", "a.pdf",
+                "application/pdf", 0.5);
+        when(documentRetrievalService.search(anyString(), anyInt())).thenReturn(List.of(chunk));
+        when(promptService.systemPrompt()).thenReturn("SYSTEM");
+        when(aiChatService.chat(anyString(), anyString(), anyList())).thenReturn("answer");
+
+        service().ask("question");
+
+        verify(aiChatService).chat(anyString(), anyString(), argThat(tools ->
+                tools.size() == 4
+                        && tools.contains(customerTools)
+                        && tools.contains(leadTools)
+                        && tools.contains(productTools)
+                        && tools.contains(invoiceTools)));
     }
 
     @Test
@@ -109,17 +141,17 @@ class DefaultAiAssistantServiceTest {
                 "evil.txt", "text/plain", 0.5);
         when(documentRetrievalService.search(anyString(), anyInt())).thenReturn(List.of(chunk));
         when(promptService.systemPrompt()).thenReturn("TRUSTED_SYSTEM_PROMPT");
-        when(aiChatService.chat(anyString(), anyString())).thenReturn("answer");
+        when(aiChatService.chat(anyString(), anyString(), anyList())).thenReturn("answer");
 
         service().ask("What does the document say?");
 
         verify(aiChatService).chat(
                 eq("TRUSTED_SYSTEM_PROMPT"),
-                org.mockito.ArgumentMatchers.argThat(userMessage -> userMessage.contains(maliciousContent)));
+                argThat(userMessage -> userMessage.contains(maliciousContent)),
+                anyList());
         // The system prompt argument is the fixed, trusted string only —
         // never the malicious content, and never a concatenation of both.
-        verify(aiChatService, never()).chat(
-                org.mockito.ArgumentMatchers.contains(maliciousContent), anyString());
+        verify(aiChatService, never()).chat(contains(maliciousContent), anyString(), anyList());
     }
 
     @Test
@@ -149,7 +181,7 @@ class DefaultAiAssistantServiceTest {
                 "application/pdf", 0.5);
         when(documentRetrievalService.search(anyString(), anyInt())).thenReturn(List.of(chunk));
         when(promptService.systemPrompt()).thenReturn("system");
-        when(aiChatService.chat(anyString(), anyString()))
+        when(aiChatService.chat(anyString(), anyString(), anyList()))
                 .thenThrow(new AiProviderException("AI chat request failed", new RuntimeException("timeout")));
 
         assertThatThrownBy(() -> service().ask("question")).isInstanceOf(AiProviderException.class);

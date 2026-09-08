@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: Phase 16 — the first real AI Assistant + RAG Chat capability: `POST /api/v1/ai/chat` orchestrates Phase 15's `DocumentRetrievalService` → a fixed, versioned system prompt → the extended `AiChatService` → backend-generated sources. RAG-only, stateless, no tool calling, no conversation persistence, no business-data access. Remaining business modules (`analytics`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
+> Status: Phase 17 — `POST /api/v1/ai/chat` now also supports read-only business-data tool calling: four `@PreAuthorize`-gated tools (`CustomerTools`, `LeadTools`, `ProductTools`, `InvoiceTools`) let the assistant look up customers, leads, products, and outstanding invoices, each through the existing domain service layer. Still stateless, still no mutating actions, no conversation persistence. Remaining business modules (`analytics`, `notifications`, `audit`) remain empty placeholders until their respective phases. No frontend code exists yet.
 
 ## 1a. Backend Foundation (Phase 2)
 
@@ -144,6 +144,15 @@
 - **No new dependency, no new migration, no new RBAC permission** — `AI_USE` (existing since Phase 6) is reused as-is.
 - Full detail is in [security.md](security.md) §3n.
 
+## 1p. Read-Only AI Tool Calling (Phase 17)
+
+- **`ai` module gains `tools/{CustomerTools, LeadTools, ProductTools, InvoiceTools}` and `tools/dto/*`**, plus a new `config/AiToolExecutionConfig`. `AiChatService` gains a second new overload, `chat(String systemPrompt, String userMessage, List<Object> tools)` — again a separate method body, not a refactor of the two existing overloads. `DefaultAiAssistantService` now constructor-injects all four tool beans directly (unconditional `@Component`s, no `ObjectProvider`) and passes the fixed four-tool list to every chat call.
+- **Each tool class is a thin translation layer over an existing domain service** — `CustomerTools` → `CustomerService`, `LeadTools` → `LeadService`, `ProductTools` → `ProductService`, `InvoiceTools` → `InvoiceService` (via a new `InvoiceService.getOutstanding`, backed by an additive `statuses` filter on `InvoiceSearchCriteria`/`InvoiceRepository`) — never a parallel or duplicated business-logic path, and never direct repository access.
+- **`@PreAuthorize` on each tool method is the real, empirically-verified enforcement mechanism** (see `docs/security.md` §3o) — `CUSTOMER_READ`/`LEAD_READ`/`PRODUCT_READ`/`INVOICE_READ` respectively, independent of `AI_USE`. Tenant scoping requires no tool-specific code at all: it's inherited from each domain service's own existing `TenantContext` resolution, since no tool accepts an organization/tenant parameter.
+- **A custom `ToolExecutionExceptionProcessor` bean** (`AiToolExecutionConfig`, the same `@ConditionalOnMissingBean` override pattern as Phase 16's `RestClient.Builder`) replaces Spring AI's default, which would otherwise return a denied/failed tool call's raw exception message to the model.
+- **No new REST endpoint** — the existing `POST /api/v1/ai/chat` is unchanged at the HTTP layer; tools are only reachable through it. **No new migration** (Flyway remains at `V12`), **no new RBAC permission**, **no new Maven dependency**.
+- Full detail is in [security.md](security.md) §3o and [ai-architecture.md](ai-architecture.md) §4/§0.
+
 ## 1. Style
 
 BizPilot AI is built as a **modular monolith** on the backend, not a microservices system. Business capabilities are separated into clearly bounded Java packages (modules) inside a single Spring Boot application. This gives most of the maintainability benefits of modular design (clear boundaries, independent evolution, testability) without the operational overhead of distributed systems, which is not justified at this stage.
@@ -195,7 +204,7 @@ Each module owns its own controller/service/repository/entity/dto/mapper/excepti
 | `sales` | Leads ✅ (Phase 8), quotations ✅ (Phase 10), invoices, sales pipeline |
 | `products` | Product catalog, categories ✅ (Phase 9) |
 | `documents` | Document upload, metadata, local storage abstraction ✅ (Phase 13); extraction/chunking/async processing pipeline ✅ (Phase 15) |
-| `ai` | Spring AI integration: chat ✅/embeddings ✅ foundation (Phase 14); PGVector storage + tenant-safe retrieval ✅ (Phase 15); tool calling, conversation memory deferred to Phase 16+ |
+| `ai` | Spring AI integration: chat ✅/embeddings ✅ foundation (Phase 14); PGVector storage + tenant-safe retrieval ✅ (Phase 15); RAG assistant chat ✅ (Phase 16); read-only business-data tool calling ✅ (Phase 17); mutating tools, conversation memory deferred |
 | `analytics` | Dashboards, aggregated reporting |
 | `tasks` | Task management ✅ (Phase 12) |
 | `notifications` | Notification delivery |

@@ -384,7 +384,7 @@ Only PDF, TXT, and DOCX are accepted — the filename extension, declared `Conte
 
 ### AI Foundation (Phase 14)
 
-Phase 14 adds a minimal Spring AI foundation with **no REST endpoint and no persistence** — it exists purely so future phases (Phase 15 RAG, Phase 16 tool calling, Phase 17 the AI assistant) have a working `AiChatService`/`AiEmbeddingService` to build on. There is nothing to `curl` yet.
+Phase 14 adds a minimal Spring AI foundation with **no REST endpoint and no persistence** — it exists purely so future phases (Phase 15 RAG, Phase 16 the AI assistant, Phase 17 read-only tool calling) have a working `AiChatService`/`AiEmbeddingService` to build on. There is nothing to `curl` yet.
 
 - **Provider: OpenAI only**, via `spring-ai-starter-model-openai` (Spring AI 1.1.8, BOM-managed; Spring Boot stays at 3.5.16, unchanged). This is the only starter that provides both chat and embeddings from one artifact/API key.
 - **Disabled by default.** Set `AI_ENABLED=true` in your local `.env` to activate BizPilot's own `DefaultAiChatService`/`DefaultAiEmbeddingService` beans. That alone is **not** sufficient — Spring AI's own model auto-configuration is independently gated by `AI_CHAT_PROVIDER`/`AI_EMBEDDING_PROVIDER`, which must also be set to `openai` (not left at their `none` default), together with a real `OPENAI_API_KEY`.
@@ -427,6 +427,25 @@ curl -s -X POST http://localhost:8080/api/v1/ai/chat \
 - **If AI is disabled** (the default — same as Phase 14/15), the endpoint returns `503` with `{"code": "AI_DISABLED", ...}` immediately, no retrieval or OpenAI call attempted. Verified live in Docker with no `OPENAI_API_KEY` at all.
 - **Retrieved document content is always treated as data, never as instructions** — enforced structurally via Spring AI's own system/user message role separation, not just prompt wording. See [docs/security.md](docs/security.md) §3n for the full account, including the live cross-tenant and prompt-injection test evidence.
 - No conversation memory, no streaming, no tool calling, no business-data access (customers/leads/invoices/etc.) — this endpoint only ever answers from your organization's uploaded documents.
+
+### Read-Only AI Tool Calling (Phase 17)
+
+Phase 17 lets the same `/api/v1/ai/chat` endpoint answer business-data questions (not just document questions) by calling four read-only tools — `searchCustomers`/`getCustomer`/`getCustomerHistory`, `searchLeads`/`getLead`, `searchProducts`, `getOutstandingInvoices` — each gated by its own permission (`CUSTOMER_READ`/`LEAD_READ`/`PRODUCT_READ`/`INVOICE_READ`), independent of `AI_USE`. No configuration changes beyond what Phase 15/16 already require — enabling AI enables the tools automatically.
+
+```bash
+# Same AI_* variables as Phase 16. Note this endpoint still requires at
+# least one retrieved document chunk before the model (and therefore any
+# tool) is ever invoked — see the RAG note below.
+curl -s -X POST http://localhost:8080/api/v1/ai/chat \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"message": "What are our outstanding invoices?"}'
+```
+
+- **Read-only, and a fixed set of four tools only** — no tool can create, update, or delete anything. `createTask`/`createQuotation`/`getSalesSummary` remain unbuilt (a later phase, alongside mandatory action confirmation for anything that mutates data).
+- **Every tool independently enforces its own permission** via `@PreAuthorize`, empirically verified to be the real enforcement mechanism Spring AI's tool-calling machinery respects (not assumed to work) — see [docs/security.md](docs/security.md) §3o. A principal with `AI_USE` but not the matching `*_READ` permission is denied by the tool itself.
+- **Tenant isolation requires no new code** — every tool calls the same tenant-scoped domain service the equivalent REST endpoint already uses, so a cross-tenant lookup by exact ID returns the tool's normal "not found" result, never another organization's data.
+- **Fixed at 5 results per search tool**, never client/model-configurable. Free-text queries are length-bounded; IDs are validated as UUIDs.
+- See [docs/ai-architecture.md](docs/ai-architecture.md) §0/§4 for exactly which tools exist today versus what remains planned.
 
 ## Running the Frontend
 
