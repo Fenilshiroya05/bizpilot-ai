@@ -19,6 +19,18 @@ const DashboardPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import('@/features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })),
 )
+const CustomersListPage = lazy(() =>
+  import('@/features/customers/CustomersListPage').then((m) => ({ default: m.CustomersListPage })),
+)
+const CustomerDetailPage = lazy(() =>
+  import('@/features/customers/CustomerDetailPage').then((m) => ({ default: m.CustomerDetailPage })),
+)
+const LeadsListPage = lazy(() =>
+  import('@/features/leads/LeadsListPage').then((m) => ({ default: m.LeadsListPage })),
+)
+const LeadDetailPage = lazy(() =>
+  import('@/features/leads/LeadDetailPage').then((m) => ({ default: m.LeadDetailPage })),
+)
 
 function PageFallback() {
   return (
@@ -53,7 +65,15 @@ export const router = createBrowserRouter([
             path: '/customers',
             element: (
               <RequirePermission permission="CUSTOMER_READ">
-                <ComingSoon title="Customers" phase="Phase 21" />
+                {withSuspense(<CustomersListPage />)}
+              </RequirePermission>
+            ),
+          },
+          {
+            path: '/customers/:id',
+            element: (
+              <RequirePermission permission="CUSTOMER_READ">
+                {withSuspense(<CustomerDetailPage />)}
               </RequirePermission>
             ),
           },
@@ -61,7 +81,15 @@ export const router = createBrowserRouter([
             path: '/leads',
             element: (
               <RequirePermission permission="LEAD_READ">
-                <ComingSoon title="Leads" phase="Phase 21" />
+                {withSuspense(<LeadsListPage />)}
+              </RequirePermission>
+            ),
+          },
+          {
+            path: '/leads/:id',
+            element: (
+              <RequirePermission permission="LEAD_READ">
+                {withSuspense(<LeadDetailPage />)}
               </RequirePermission>
             ),
           },

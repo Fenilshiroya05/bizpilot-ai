@@ -112,10 +112,406 @@ export async function mockAuthenticatedSession(page: Page, analytics: unknown = 
   await mockLogoutSuccess(page)
 }
 
+/** Same as {@link mockAuthenticatedSession}, but as a specific role set (for RBAC tests). */
+export async function mockAuthenticatedSessionAs(page: Page, roles: string[], analytics: unknown = TEST_ANALYTICS) {
+  await mockLoginSuccess(page)
+  await mockSessionAs(page, roles)
+  await mockAnalytics(page, analytics)
+  await mockLogoutSuccess(page)
+}
+
 export async function loginViaUi(page: Page) {
   await page.goto('/auth/login')
   await page.getByLabel('Email').fill(TEST_EMAIL)
   await page.getByLabel('Password', { exact: true }).fill(TEST_PASSWORD)
   await page.getByRole('button', { name: 'Sign in' }).click()
   await page.waitForURL('**/dashboard')
+}
+
+/**
+ * Client-side (SPA) navigation via the real sidebar link — never
+ * `page.goto('/customers')`/`page.goto('/leads')` after login. Tokens are
+ * memory-only (Phase 20's locked decision); a full `page.goto` navigation
+ * reloads the page and silently loses the session, bouncing back to
+ * `/auth/login`, exactly like a real user's browser reload would.
+ */
+export async function goToCustomers(page: Page) {
+  await page.getByRole('complementary').getByRole('link', { name: 'Customers' }).click()
+  await page.waitForURL('**/customers')
+}
+
+export async function goToLeads(page: Page) {
+  await page.getByRole('complementary').getByRole('link', { name: 'Leads' }).click()
+  await page.waitForURL('**/leads')
+}
+
+// ---------------------------------------------------------------------------
+// Phase 21 — Customers / Leads / AI Lead Scoring fixtures
+// ---------------------------------------------------------------------------
+
+/** Mocks `/auth/me` with a specific role set instead of the default OWNER. */
+export async function mockSessionAs(page: Page, roles: string[]) {
+  await page.route('**/api/v1/auth/me', (route) => json(route, 200, { ...TEST_USER, roles }))
+  await page.route('**/api/v1/organizations/current', (route) => json(route, 200, TEST_ORGANIZATION))
+}
+
+interface MockPage<T> {
+  content: T[]
+  totalElements: number
+  totalPages: number
+  number: number
+  size: number
+  first: boolean
+  last: boolean
+  empty: boolean
+}
+
+/** Slices `all` by `page`/`size`, mirroring Spring Data's real Page<T> shape. */
+function pageOf<T>(all: T[], page = 0, size = 20): MockPage<T> {
+  const totalPages = Math.max(Math.ceil(all.length / size), all.length > 0 ? 1 : 0)
+  const content = all.slice(page * size, page * size + size)
+  return {
+    content,
+    totalElements: all.length,
+    totalPages,
+    number: page,
+    size,
+    first: page === 0,
+    last: page >= totalPages - 1,
+    empty: content.length === 0,
+  }
+}
+
+interface MockActivity {
+  id: string
+  type: string
+  content: string
+  createdByUserId: string
+  createdAt: string
+}
+
+export const TEST_CUSTOMER = {
+  id: 'e2e-customer-1',
+  name: 'Acme Retail Pvt Ltd',
+  company: 'Acme Retail' as string | null,
+  email: 'contact@acmeretail.example' as string | null,
+  phone: '+91 98765 43210' as string | null,
+  address: '221B, MG Road, Bengaluru' as string | null,
+  gstin: null as string | null,
+  status: 'ACTIVE' as string,
+  notes: null as string | null,
+  organizationId: TEST_USER.organizationId,
+  createdAt: '2026-01-01T00:00:00Z',
+  updatedAt: '2026-01-01T00:00:00Z',
+}
+
+/**
+ * A small, real, in-memory CRUD simulation behind `page.route` — not a fake
+ * UI. Every request/response shape matches the real backend contract
+ * exactly (see backend/src/main/java/com/bizpilot/crm/controller/
+ * CustomerController.java); this only replaces the network boundary so the
+ * suite is deterministic and needs no real backend.
+ */
+export async function mockCustomersResource(page: Page, initial: (typeof TEST_CUSTOMER)[] = [TEST_CUSTOMER]) {
+  const customers = initial.map((c) => ({ ...c }))
+  const historyByCustomer = new Map<string, MockActivity[]>(
+    customers.map((c) => [
+      c.id,
+      [{ id: `${c.id}-created`, type: 'CREATED', content: 'Customer created', createdByUserId: TEST_USER.id, createdAt: c.createdAt }],
+    ]),
+  )
+  let nextId = customers.length + 1
+
+  await page.route('**/api/v1/customers*', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (request.method() === 'GET') {
+      const status = url.searchParams.get('status')
+      const q = url.searchParams.get('q')?.toLowerCase()
+      let filtered = status ? customers.filter((c) => c.status === status) : customers.filter((c) => c.status !== 'ARCHIVED')
+      if (q) {
+        filtered = filtered.filter(
+          (c) =>
+            c.name.toLowerCase().includes(q) ||
+            (c.company ?? '').toLowerCase().includes(q) ||
+            (c.email ?? '').toLowerCase().includes(q),
+        )
+      }
+      const page = Number(url.searchParams.get('page') ?? '0')
+      const size = Number(url.searchParams.get('size') ?? '20')
+      return json(route, 200, pageOf(filtered, page, size))
+    }
+    if (request.method() === 'POST') {
+      const body = (request.postDataJSON() ?? {}) as Record<string, string | undefined>
+      if (!body.name || body.name.trim() === '') {
+        return json(route, 400, apiError(400, 'INVALID_CUSTOMER_DATA', 'name cannot be blank', url.pathname))
+      }
+      if (body.email && customers.some((c) => c.email === body.email)) {
+        return json(
+          route,
+          409,
+          apiError(409, 'DUPLICATE_CUSTOMER', `A customer with email '${body.email}' already exists in this organization`, url.pathname),
+        )
+      }
+      const now = new Date().toISOString()
+      const created = {
+        id: `e2e-customer-${nextId++}`,
+        name: body.name,
+        company: body.company || null,
+        email: body.email || null,
+        phone: body.phone || null,
+        address: body.address || null,
+        gstin: body.gstin || null,
+        status: 'ACTIVE',
+        notes: body.notes || null,
+        organizationId: TEST_USER.organizationId,
+        createdAt: now,
+        updatedAt: now,
+      }
+      customers.push(created)
+      historyByCustomer.set(created.id, [
+        { id: `${created.id}-created`, type: 'CREATED', content: 'Customer created', createdByUserId: TEST_USER.id, createdAt: now },
+      ])
+      return json(route, 201, created)
+    }
+    return route.fallback()
+  })
+
+  await page.route('**/api/v1/customers/*/history*', (route) => {
+    const id = new URL(route.request().url()).pathname.split('/')[4]
+    return json(route, 200, pageOf(historyByCustomer.get(id ?? '') ?? []))
+  })
+
+  await page.route('**/api/v1/customers/*/notes*', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const id = new URL(route.request().url()).pathname.split('/')[4] ?? ''
+    const body = (route.request().postDataJSON() ?? {}) as { content: string }
+    const note: MockActivity = {
+      id: `note-${Date.now()}`,
+      type: 'NOTE',
+      content: body.content,
+      createdByUserId: TEST_USER.id,
+      createdAt: new Date().toISOString(),
+    }
+    const history = historyByCustomer.get(id) ?? []
+    history.unshift(note)
+    historyByCustomer.set(id, history)
+    return json(route, 201, note)
+  })
+
+  await page.route('**/api/v1/customers/*', async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    const id = pathname.split('/').pop()
+    const customer = customers.find((c) => c.id === id)
+    if (!customer) return json(route, 404, apiError(404, 'CUSTOMER_NOT_FOUND', 'Customer not found', pathname))
+
+    if (request.method() === 'GET') return json(route, 200, customer)
+    if (request.method() === 'PATCH') {
+      if (customer.status === 'ARCHIVED') {
+        return json(route, 409, apiError(409, 'CUSTOMER_ARCHIVED', 'This customer is archived and cannot be modified', pathname))
+      }
+      const body = (request.postDataJSON() ?? {}) as Record<string, unknown>
+      for (const key of ['name', 'company', 'email', 'phone', 'address', 'gstin', 'notes', 'status'] as const) {
+        if (body[key] !== undefined) (customer as Record<string, unknown>)[key] = body[key]
+      }
+      customer.updatedAt = new Date().toISOString()
+      return json(route, 200, customer)
+    }
+    if (request.method() === 'DELETE') {
+      customer.status = 'ARCHIVED'
+      return route.fulfill({ status: 204 })
+    }
+    return route.fallback()
+  })
+
+  return { customers }
+}
+
+export const TEST_LEAD = {
+  id: 'e2e-lead-1',
+  name: 'Priya Sharma',
+  company: 'Sharma Textiles' as string | null,
+  email: 'priya@sharmatextiles.example' as string | null,
+  phone: '+91 90000 11111' as string | null,
+  status: 'NEW' as string,
+  source: 'WEBSITE' as string,
+  priority: 'MEDIUM' as string,
+  followUpDate: null as string | null,
+  assignedToUserId: null as string | null,
+  archivedAt: null as string | null,
+  organizationId: TEST_USER.organizationId,
+  createdAt: '2026-01-01T00:00:00Z',
+  updatedAt: '2026-01-01T00:00:00Z',
+}
+
+export async function mockLeadsResource(page: Page, initial: (typeof TEST_LEAD)[] = [TEST_LEAD]) {
+  const leads = initial.map((l) => ({ ...l }))
+  const historyByLead = new Map<string, MockActivity[]>(
+    leads.map((l) => [
+      l.id,
+      [{ id: `${l.id}-created`, type: 'CREATED', content: 'Lead created', createdByUserId: TEST_USER.id, createdAt: l.createdAt }],
+    ]),
+  )
+  let nextId = leads.length + 1
+
+  await page.route('**/api/v1/leads*', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (request.method() === 'GET') {
+      const status = url.searchParams.get('status')
+      const source = url.searchParams.get('source')
+      const priority = url.searchParams.get('priority')
+      const assignedToUserId = url.searchParams.get('assignedToUserId')
+      const unassigned = url.searchParams.get('unassigned') === 'true'
+      const followUpBefore = url.searchParams.get('followUpBefore')
+      const archived = url.searchParams.get('archived') === 'true'
+      const q = url.searchParams.get('q')?.toLowerCase()
+
+      let filtered = leads.filter((l) => (archived ? !!l.archivedAt : !l.archivedAt))
+      if (status) filtered = filtered.filter((l) => l.status === status)
+      if (source) filtered = filtered.filter((l) => l.source === source)
+      if (priority) filtered = filtered.filter((l) => l.priority === priority)
+      if (assignedToUserId) filtered = filtered.filter((l) => l.assignedToUserId === assignedToUserId)
+      if (unassigned) filtered = filtered.filter((l) => l.assignedToUserId === null)
+      if (followUpBefore) filtered = filtered.filter((l) => l.followUpDate && l.followUpDate <= followUpBefore)
+      if (q) {
+        filtered = filtered.filter(
+          (l) => l.name.toLowerCase().includes(q) || (l.company ?? '').toLowerCase().includes(q),
+        )
+      }
+      const page = Number(url.searchParams.get('page') ?? '0')
+      const size = Number(url.searchParams.get('size') ?? '20')
+      return json(route, 200, pageOf(filtered, page, size))
+    }
+    if (request.method() === 'POST') {
+      const body = (request.postDataJSON() ?? {}) as Record<string, string | undefined>
+      if (!body.name || body.name.trim() === '') {
+        return json(route, 400, apiError(400, 'INVALID_LEAD_DATA', 'name cannot be blank', url.pathname))
+      }
+      if (!body.source) {
+        return json(route, 400, apiError(400, 'VALIDATION_ERROR', 'source is required', url.pathname))
+      }
+      const now = new Date().toISOString()
+      const created = {
+        id: `e2e-lead-${nextId++}`,
+        name: body.name,
+        company: body.company || null,
+        email: body.email || null,
+        phone: body.phone || null,
+        status: 'NEW',
+        source: body.source,
+        priority: body.priority || 'MEDIUM',
+        followUpDate: body.followUpDate || null,
+        assignedToUserId: null,
+        archivedAt: null,
+        organizationId: TEST_USER.organizationId,
+        createdAt: now,
+        updatedAt: now,
+      }
+      leads.push(created)
+      historyByLead.set(created.id, [
+        { id: `${created.id}-created`, type: 'CREATED', content: 'Lead created', createdByUserId: TEST_USER.id, createdAt: now },
+      ])
+      return json(route, 201, created)
+    }
+    return route.fallback()
+  })
+
+  await page.route('**/api/v1/leads/*/history*', (route) => {
+    const id = new URL(route.request().url()).pathname.split('/')[4]
+    return json(route, 200, pageOf(historyByLead.get(id ?? '') ?? []))
+  })
+
+  await page.route('**/api/v1/leads/*/notes*', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const id = new URL(route.request().url()).pathname.split('/')[4] ?? ''
+    const body = (route.request().postDataJSON() ?? {}) as { content: string }
+    const note: MockActivity = {
+      id: `note-${Date.now()}`,
+      type: 'NOTE',
+      content: body.content,
+      createdByUserId: TEST_USER.id,
+      createdAt: new Date().toISOString(),
+    }
+    const history = historyByLead.get(id) ?? []
+    history.unshift(note)
+    historyByLead.set(id, history)
+    return json(route, 201, note)
+  })
+
+  await page.route('**/api/v1/leads/*/assign', async (route) => {
+    const id = new URL(route.request().url()).pathname.split('/')[4] ?? ''
+    const lead = leads.find((l) => l.id === id)
+    if (!lead) return json(route, 404, apiError(404, 'LEAD_NOT_FOUND', 'Lead not found', route.request().url()))
+    const body = (route.request().postDataJSON() ?? {}) as { assigneeUserId: string | null }
+    const previous = lead.assignedToUserId
+    lead.assignedToUserId = body.assigneeUserId
+    const history = historyByLead.get(id) ?? []
+    history.unshift({
+      id: `assign-${Date.now()}`,
+      type: 'ASSIGNED',
+      content: body.assigneeUserId ? `Assigned to ${body.assigneeUserId}` : `Unassigned (previously assigned to ${previous})`,
+      createdByUserId: TEST_USER.id,
+      createdAt: new Date().toISOString(),
+    })
+    historyByLead.set(id, history)
+    return json(route, 200, lead)
+  })
+
+  await page.route('**/api/v1/leads/*', async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    const id = pathname.split('/').pop()
+    const lead = leads.find((l) => l.id === id)
+    if (!lead) return json(route, 404, apiError(404, 'LEAD_NOT_FOUND', 'Lead not found', pathname))
+
+    if (request.method() === 'GET') return json(route, 200, lead)
+    if (request.method() === 'PATCH') {
+      if (lead.archivedAt) {
+        return json(route, 409, apiError(409, 'LEAD_ARCHIVED', 'This lead is archived and cannot be modified', pathname))
+      }
+      const body = (request.postDataJSON() ?? {}) as Record<string, unknown>
+      for (const key of ['name', 'company', 'email', 'phone', 'source', 'priority', 'status'] as const) {
+        if (body[key] !== undefined) (lead as Record<string, unknown>)[key] = body[key]
+      }
+      if (body.clearFollowUpDate) lead.followUpDate = null
+      else if (typeof body.followUpDate === 'string') lead.followUpDate = body.followUpDate
+      lead.updatedAt = new Date().toISOString()
+      return json(route, 200, lead)
+    }
+    if (request.method() === 'DELETE') {
+      lead.archivedAt = new Date().toISOString()
+      return route.fulfill({ status: 204 })
+    }
+    return route.fallback()
+  })
+
+  return { leads }
+}
+
+export async function mockLeadScoreSuccess(page: Page, leadId: string, overrides: Record<string, unknown> = {}) {
+  await page.route(`**/api/v1/leads/${leadId}/score`, (route) =>
+    json(route, 200, {
+      leadId,
+      score: 82,
+      priority: 'HIGH',
+      reasoning: 'The lead has requested a demo twice and matches our ideal customer profile.',
+      recommendedAction: 'Schedule a call within 48 hours.',
+      generatedAt: new Date().toISOString(),
+      ...overrides,
+    }),
+  )
+}
+
+export async function mockLeadScoreDisabled(page: Page, leadId: string) {
+  await page.route(`**/api/v1/leads/${leadId}/score`, (route) =>
+    json(route, 503, apiError(503, 'AI_DISABLED', 'AI is disabled for this organization', `/api/v1/leads/${leadId}/score`)),
+  )
+}
+
+export async function mockLeadScoreFailure(page: Page, leadId: string) {
+  await page.route(`**/api/v1/leads/${leadId}/score`, (route) =>
+    json(route, 502, apiError(502, 'AI_PROVIDER_ERROR', 'The AI provider returned an error', `/api/v1/leads/${leadId}/score`)),
+  )
 }

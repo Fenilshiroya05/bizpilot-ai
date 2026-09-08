@@ -489,7 +489,7 @@ curl -s http://localhost:8080/api/v1/analytics/summary \
 
 ## Running the Frontend
 
-Phase 20 scaffolds the frontend foundation: React + TypeScript + Vite, Tailwind CSS, the design system, the application shell (sidebar/top bar/mobile drawer), authentication, RBAC-aware navigation, and the dashboard KPI cards (`GET /api/v1/analytics/summary`). Every other module (Customers, Leads, Products, Quotations, Invoices, Tasks, Documents, AI Assistant) is an honest "coming in a later phase" placeholder behind its real nav link — see [docs/roadmap.md](docs/roadmap.md) for the exact frontend phase plan.
+Phase 20 scaffolds the frontend foundation: React + TypeScript + Vite, Tailwind CSS, the design system, the application shell (sidebar/top bar/mobile drawer), authentication, RBAC-aware navigation, and the dashboard KPI cards (`GET /api/v1/analytics/summary`). Phase 21 adds real Customers (`/customers`) and Leads (`/leads`) — list/search/filter/pagination, create/edit/archive, notes/history, self-assign/unassign, and an AI Lead Scoring panel on the Lead detail page (advisory only — see [docs/roadmap.md](docs/roadmap.md#phase-21--completed-scope) for the full account, including the locked "no teammate picker" decision: the backend has no user-directory endpoint, so lead assignment only ever acts on the current user's own id). Every remaining module (Products, Quotations, Invoices, Tasks, Documents, full AI Assistant) is still an honest "coming in a later phase" placeholder behind its real nav link — see [docs/roadmap.md](docs/roadmap.md) for the exact frontend phase plan.
 
 ```bash
 cd frontend

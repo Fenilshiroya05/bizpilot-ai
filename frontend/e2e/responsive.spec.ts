@@ -1,6 +1,16 @@
 import { expect, test } from '@playwright/test'
 
-import { loginViaUi, mockAuthenticatedSession } from './mocks'
+import {
+  goToCustomers,
+  goToLeads,
+  loginViaUi,
+  mockAuthenticatedSession,
+  mockCustomersResource,
+  mockLeadsResource,
+  mockLeadScoreSuccess,
+  TEST_CUSTOMER,
+  TEST_LEAD,
+} from './mocks'
 import { attachConsoleGuard, horizontalOverflowPx } from './sanity'
 
 const DESKTOP_BREAKPOINTS = [
@@ -130,6 +140,82 @@ test.describe('responsive — login and settings screenshots', () => {
       await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
       expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
       await page.screenshot({ path: `test-results/screenshots/settings-${width}x${height}.png`, fullPage: true })
+    }
+  })
+})
+
+test.describe('responsive — customers and leads (Phase 21)', () => {
+  test('customers list: table on desktop, cards on mobile, no horizontal overflow, screenshots', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await mockCustomersResource(page, [TEST_CUSTOMER])
+    await loginViaUi(page)
+    await goToCustomers(page)
+
+    for (const { width, height } of [...DESKTOP_BREAKPOINTS, ...MOBILE_BREAKPOINTS]) {
+      await page.setViewportSize({ width, height })
+      await expect(page.getByRole('heading', { name: 'Customers' })).toBeVisible()
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/customers-list-${width}x${height}.png`, fullPage: true })
+    }
+
+    // At a mobile width, the desktop table is not in the accessible tree —
+    // the row is reachable only via the stacked card link.
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect(page.getByRole('table')).not.toBeVisible()
+    await expect(page.getByRole('link', { name: new RegExp(TEST_CUSTOMER.name) })).toBeVisible()
+  })
+
+  test('customer detail: single column on mobile, no horizontal overflow, screenshots', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await mockCustomersResource(page, [TEST_CUSTOMER])
+    await loginViaUi(page)
+    await goToCustomers(page)
+    await page.getByRole('table').getByRole('link', { name: TEST_CUSTOMER.name }).click()
+    await expect(page.getByRole('heading', { name: TEST_CUSTOMER.name })).toBeVisible()
+
+    for (const { width, height } of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize({ width, height })
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/customer-detail-${width}x${height}.png`, fullPage: true })
+    }
+  })
+
+  test('leads list: table on desktop, cards on mobile, no horizontal overflow, screenshots', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await mockLeadsResource(page, [TEST_LEAD])
+    await loginViaUi(page)
+    await goToLeads(page)
+
+    for (const { width, height } of [...DESKTOP_BREAKPOINTS, ...MOBILE_BREAKPOINTS]) {
+      await page.setViewportSize({ width, height })
+      await expect(page.getByRole('heading', { name: 'Leads' })).toBeVisible()
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/leads-list-${width}x${height}.png`, fullPage: true })
+    }
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect(page.getByRole('table')).not.toBeVisible()
+    await expect(page.getByRole('link', { name: new RegExp(TEST_LEAD.name) })).toBeVisible()
+  })
+
+  test('lead detail (with AI scoring success): single column on mobile, no horizontal overflow, screenshots', async ({
+    page,
+  }) => {
+    await mockAuthenticatedSession(page)
+    await mockLeadsResource(page, [TEST_LEAD])
+    await mockLeadScoreSuccess(page, TEST_LEAD.id)
+    await loginViaUi(page)
+    await goToLeads(page)
+    await page.getByRole('table').getByRole('link', { name: TEST_LEAD.name }).click()
+    await expect(page.getByRole('heading', { name: TEST_LEAD.name })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Score with AI' }).click()
+    await expect(page.getByText('82 / 100')).toBeVisible()
+
+    for (const { width, height } of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize({ width, height })
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/lead-detail-ai-score-${width}x${height}.png`, fullPage: true })
     }
   })
 })

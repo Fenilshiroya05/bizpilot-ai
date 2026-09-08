@@ -92,3 +92,163 @@ export interface AnalyticsSummaryResponse {
   outstandingInvoicesTotal: number
   pendingFollowUps: number
 }
+
+// ---- crm/entity/CustomerStatus.java ----
+export type CustomerStatus = 'ACTIVE' | 'INACTIVE' | 'ARCHIVED'
+
+// ---- crm/entity/CustomerActivityType.java ----
+export type CustomerActivityType = 'CREATED' | 'STATUS_CHANGED' | 'ARCHIVED' | 'NOTE'
+
+// ---- crm/dto/CustomerResponse.java ----
+export interface CustomerResponse {
+  id: string
+  name: string
+  company: string | null
+  email: string | null
+  phone: string | null
+  address: string | null
+  gstin: string | null
+  status: CustomerStatus
+  notes: string | null
+  organizationId: string
+  createdAt: string
+  updatedAt: string
+}
+
+// ---- crm/dto/CustomerCreateRequest.java ----
+export interface CustomerCreateRequest {
+  name: string
+  company?: string
+  email?: string
+  phone?: string
+  address?: string
+  gstin?: string
+  notes?: string
+}
+
+// ---- crm/dto/CustomerUpdateRequest.java (PATCH: omitted/undefined = unchanged) ----
+export interface CustomerUpdateRequest {
+  name?: string
+  company?: string
+  email?: string
+  phone?: string
+  address?: string
+  gstin?: string
+  notes?: string
+  status?: 'ACTIVE' | 'INACTIVE'
+}
+
+// ---- crm/dto/CustomerNoteRequest.java ----
+export interface CustomerNoteRequest {
+  content: string
+}
+
+// ---- crm/dto/CustomerActivityResponse.java ----
+export interface CustomerActivityResponse {
+  id: string
+  type: CustomerActivityType
+  content: string
+  createdByUserId: string
+  createdAt: string
+}
+
+export interface CustomerListParams {
+  q?: string
+  status?: CustomerStatus
+  page?: number
+  size?: number
+  sort?: string
+}
+
+// ---- sales/entity/{LeadStatus,LeadSource,LeadPriority}.java ----
+export type LeadStatus = 'NEW' | 'CONTACTED' | 'QUALIFIED' | 'PROPOSAL' | 'NEGOTIATION' | 'WON' | 'LOST'
+export type LeadSource = 'WEBSITE' | 'REFERRAL' | 'SOCIAL_MEDIA' | 'EMAIL' | 'PHONE' | 'OTHER'
+export type LeadPriority = 'LOW' | 'MEDIUM' | 'HIGH'
+
+// ---- sales/entity/LeadActivityType.java ----
+export type LeadActivityType = 'CREATED' | 'STATUS_CHANGED' | 'ASSIGNED' | 'ARCHIVED' | 'NOTE'
+
+// ---- sales/dto/LeadResponse.java ----
+export interface LeadResponse {
+  id: string
+  name: string
+  company: string | null
+  email: string | null
+  phone: string | null
+  status: LeadStatus
+  source: LeadSource
+  priority: LeadPriority
+  followUpDate: string | null
+  assignedToUserId: string | null
+  archivedAt: string | null
+  organizationId: string
+  createdAt: string
+  updatedAt: string
+}
+
+// ---- sales/dto/LeadCreateRequest.java ----
+export interface LeadCreateRequest {
+  name: string
+  company?: string
+  email?: string
+  phone?: string
+  source: LeadSource
+  priority?: LeadPriority
+  followUpDate?: string
+}
+
+// ---- sales/dto/LeadUpdateRequest.java (PATCH: omitted/undefined = unchanged) ----
+export interface LeadUpdateRequest {
+  name?: string
+  company?: string
+  email?: string
+  phone?: string
+  status?: LeadStatus
+  source?: LeadSource
+  priority?: LeadPriority
+  followUpDate?: string
+  clearFollowUpDate?: boolean
+}
+
+// ---- sales/dto/LeadAssignRequest.java ----
+export interface LeadAssignRequest {
+  assigneeUserId: string | null
+}
+
+// ---- sales/dto/LeadNoteRequest.java ----
+export interface LeadNoteRequest {
+  content: string
+}
+
+// ---- sales/dto/LeadActivityResponse.java ----
+export interface LeadActivityResponse {
+  id: string
+  type: LeadActivityType
+  content: string
+  createdByUserId: string
+  createdAt: string
+}
+
+export interface LeadListParams {
+  q?: string
+  status?: LeadStatus
+  source?: LeadSource
+  priority?: LeadPriority
+  assignedToUserId?: string
+  unassigned?: boolean
+  followUpBefore?: string
+  archived?: boolean
+  page?: number
+  size?: number
+  sort?: string
+}
+
+// ---- ai/scoring/dto/LeadScoreResponse.java ----
+export interface LeadScoreResponse {
+  leadId: string
+  score: number
+  priority: LeadPriority
+  reasoning: string
+  recommendedAction: string
+  generatedAt: string
+}
