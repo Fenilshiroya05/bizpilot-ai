@@ -489,3 +489,34 @@ export interface TaskListParams {
   size?: number
   sort?: string
 }
+
+// ---- documents/entity/DocumentStatus.java ----
+export type DocumentStatus = 'UPLOADED' | 'PROCESSING' | 'COMPLETED' | 'FAILED'
+
+// ---- documents/dto/DocumentResponse.java ----
+// Deliberately excludes storageKey/organizationId/filesystem path — never
+// exposed by the backend. No customer/lead/description/tags/versions field
+// exists — CLAUDE.md §16 names no such relationship for Documents (verified
+// directly against the entity and DTO source, not assumed).
+export interface DocumentResponse {
+  id: string
+  originalFilename: string
+  contentType: string
+  fileSize: number
+  status: DocumentStatus
+  uploadedByUserId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+// ---- documents/controller/DocumentController.search params ----
+// Do not add filters beyond these — the backend accepts exactly this set.
+export interface DocumentListParams {
+  q?: string
+  status?: DocumentStatus
+  contentType?: string
+  uploadedByUserId?: string
+  page?: number
+  size?: number
+  sort?: string
+}

@@ -52,6 +52,12 @@ const TasksListPage = lazy(() =>
 const TaskDetailPage = lazy(() =>
   import('@/features/tasks/TaskDetailPage').then((m) => ({ default: m.TaskDetailPage })),
 )
+const DocumentsListPage = lazy(() =>
+  import('@/features/documents/DocumentsListPage').then((m) => ({ default: m.DocumentsListPage })),
+)
+const DocumentDetailPage = lazy(() =>
+  import('@/features/documents/DocumentDetailPage').then((m) => ({ default: m.DocumentDetailPage })),
+)
 
 function PageFallback() {
   return (
@@ -182,7 +188,15 @@ export const router = createBrowserRouter([
             path: '/documents',
             element: (
               <RequirePermission permission="DOCUMENT_READ">
-                <ComingSoon title="Documents" phase="Phase 24" />
+                {withSuspense(<DocumentsListPage />)}
+              </RequirePermission>
+            ),
+          },
+          {
+            path: '/documents/:id',
+            element: (
+              <RequirePermission permission="DOCUMENT_READ">
+                {withSuspense(<DocumentDetailPage />)}
               </RequirePermission>
             ),
           },

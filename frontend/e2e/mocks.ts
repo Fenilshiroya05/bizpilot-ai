@@ -160,6 +160,11 @@ export async function goToTasks(page: Page) {
   await page.waitForURL('**/tasks')
 }
 
+export async function goToDocuments(page: Page) {
+  await page.getByRole('complementary').getByRole('link', { name: 'Documents' }).click()
+  await page.waitForURL('**/documents')
+}
+
 // ---------------------------------------------------------------------------
 // Phase 21 — Customers / Leads / AI Lead Scoring fixtures
 // ---------------------------------------------------------------------------
@@ -996,4 +1001,116 @@ export async function mockTasksResource(page: Page, initial: (typeof TEST_TASK)[
   })
 
   return { tasks }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 24 — Documents fixtures
+// ---------------------------------------------------------------------------
+
+const ALLOWED_DOCUMENT_CONTENT_TYPES = [
+  'application/pdf',
+  'text/plain',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]
+
+export const TEST_DOCUMENT = {
+  id: 'e2e-document-1',
+  originalFilename: 'sample.pdf',
+  contentType: 'application/pdf',
+  fileSize: 267,
+  status: 'COMPLETED' as string,
+  uploadedByUserId: TEST_USER.id as string | null,
+  createdAt: '2026-01-01T00:00:00Z',
+  updatedAt: '2026-01-01T00:00:00Z',
+}
+
+/**
+ * Same real, in-memory CRUD simulation as {@link mockTasksResource}. Upload
+ * is multipart, not JSON, so the POST handler reads the raw request body
+ * and regex-extracts the filename/Content-Type from the multipart headers
+ * (Playwright's `postDataJSON()` only works for JSON bodies) — mirroring
+ * just enough of what `DocumentValidator` checks (content-type must be one
+ * of the three supported types) to exercise the real error path, without
+ * reimplementing the backend's magic-byte signature check.
+ */
+export async function mockDocumentsResource(page: Page, initial: (typeof TEST_DOCUMENT)[] = [TEST_DOCUMENT]) {
+  const documents = initial.map((d) => ({ ...d }))
+  let nextId = documents.length + 1
+
+  await page.route('**/api/v1/documents*', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (request.method() === 'GET') {
+      const status = url.searchParams.get('status')
+      const contentType = url.searchParams.get('contentType')
+      const q = url.searchParams.get('q')?.toLowerCase()
+
+      let filtered = [...documents]
+      if (status) filtered = filtered.filter((d) => d.status === status)
+      if (contentType) filtered = filtered.filter((d) => d.contentType === contentType)
+      if (q) filtered = filtered.filter((d) => d.originalFilename.toLowerCase().includes(q))
+
+      const page = Number(url.searchParams.get('page') ?? '0')
+      const size = Number(url.searchParams.get('size') ?? '20')
+      return json(route, 200, pageOf(filtered, page, size))
+    }
+    if (request.method() === 'POST') {
+      const buffer = request.postDataBuffer()
+      const raw = buffer ? buffer.toString('latin1') : ''
+      const filename = raw.match(/filename="([^"]*)"/)?.[1] ?? 'unnamed'
+      const contentType = (raw.match(/Content-Type:\s*([^\r\n]+)/i)?.[1] ?? '').trim()
+
+      if (!ALLOWED_DOCUMENT_CONTENT_TYPES.includes(contentType)) {
+        return json(
+          route,
+          400,
+          apiError(400, 'INVALID_DOCUMENT', `Unsupported content type: ${contentType || 'unknown'}`, url.pathname),
+        )
+      }
+      const now = new Date().toISOString()
+      const created = {
+        id: `e2e-document-${nextId++}`,
+        originalFilename: filename,
+        contentType,
+        fileSize: buffer ? buffer.length : 0,
+        status: 'UPLOADED',
+        uploadedByUserId: TEST_USER.id,
+        createdAt: now,
+        updatedAt: now,
+      }
+      documents.push(created)
+      return json(route, 201, created)
+    }
+    return route.fallback()
+  })
+
+  await page.route('**/api/v1/documents/*/download', async (route) => {
+    const id = new URL(route.request().url()).pathname.split('/')[4] ?? ''
+    const doc = documents.find((d) => d.id === id)
+    if (!doc) return json(route, 404, apiError(404, 'DOCUMENT_NOT_FOUND', 'Document not found', route.request().url()))
+    return route.fulfill({
+      status: 200,
+      contentType: doc.contentType,
+      headers: { 'Content-Disposition': `attachment; filename="${doc.originalFilename}"` },
+      body: `mock file contents for ${doc.originalFilename}`,
+    })
+  })
+
+  await page.route('**/api/v1/documents/*', async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    const id = pathname.split('/').pop()
+    const doc = documents.find((d) => d.id === id)
+    if (!doc) return json(route, 404, apiError(404, 'DOCUMENT_NOT_FOUND', 'Document not found', pathname))
+
+    if (request.method() === 'GET') return json(route, 200, doc)
+    if (request.method() === 'DELETE') {
+      const index = documents.findIndex((d) => d.id === id)
+      if (index >= 0) documents.splice(index, 1)
+      return route.fulfill({ status: 204 })
+    }
+    return route.fallback()
+  })
+
+  return { documents }
 }

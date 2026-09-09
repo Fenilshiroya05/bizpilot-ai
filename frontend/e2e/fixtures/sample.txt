@@ -1,0 +1,1 @@
+This is a sample text document used by Playwright fixtures for BizPilot AI Documents e2e tests.

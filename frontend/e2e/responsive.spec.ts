@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 
 import {
   goToCustomers,
+  goToDocuments,
   goToLeads,
   goToProducts,
   goToQuotations,
@@ -9,12 +10,14 @@ import {
   loginViaUi,
   mockAuthenticatedSession,
   mockCustomersResource,
+  mockDocumentsResource,
   mockLeadsResource,
   mockLeadScoreSuccess,
   mockProductsResource,
   mockQuotationsResource,
   mockTasksResource,
   TEST_CUSTOMER,
+  TEST_DOCUMENT,
   TEST_LEAD,
   TEST_PRODUCT,
   TEST_TASK,
@@ -365,6 +368,58 @@ test.describe('responsive — tasks (Phase 23)', () => {
       await page.setViewportSize({ width, height })
       expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
       await page.screenshot({ path: `test-results/screenshots/task-form-${width}x${height}.png`, fullPage: true })
+    }
+  })
+})
+
+test.describe('responsive — documents (Phase 24)', () => {
+  test('documents list: table on desktop, cards on mobile, no horizontal overflow, screenshots', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await mockDocumentsResource(page, [TEST_DOCUMENT])
+    await loginViaUi(page)
+    await goToDocuments(page)
+
+    for (const { width, height } of [...DESKTOP_BREAKPOINTS, ...MOBILE_BREAKPOINTS]) {
+      await page.setViewportSize({ width, height })
+      await expect(page.getByRole('heading', { name: 'Documents' })).toBeVisible()
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/documents-list-${width}x${height}.png`, fullPage: true })
+    }
+
+    // At a mobile width, the desktop table is not in the accessible tree —
+    // the row is reachable only via the stacked card link.
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect(page.getByRole('table')).not.toBeVisible()
+    await expect(page.getByRole('link', { name: new RegExp(TEST_DOCUMENT.originalFilename) })).toBeVisible()
+  })
+
+  test('document detail: single column on mobile, no horizontal overflow, screenshots', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await mockDocumentsResource(page, [TEST_DOCUMENT])
+    await loginViaUi(page)
+    await goToDocuments(page)
+    await page.getByRole('table').getByRole('link', { name: TEST_DOCUMENT.originalFilename }).click()
+    await expect(page.getByRole('heading', { name: TEST_DOCUMENT.originalFilename })).toBeVisible()
+
+    for (const { width, height } of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize({ width, height })
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/document-detail-${width}x${height}.png`, fullPage: true })
+    }
+  })
+
+  test('document upload dialog: responsive layout, no horizontal overflow, screenshots', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await mockDocumentsResource(page, [])
+    await loginViaUi(page)
+    await goToDocuments(page)
+    await page.getByRole('button', { name: 'Upload document' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    for (const { width, height } of [...DESKTOP_BREAKPOINTS, ...MOBILE_BREAKPOINTS]) {
+      await page.setViewportSize({ width, height })
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/document-upload-${width}x${height}.png`, fullPage: true })
     }
   })
 })

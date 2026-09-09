@@ -1,6 +1,11 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { expect, test, type Page } from '@playwright/test'
 
 import { attachConsoleGuard, horizontalOverflowPx } from './sanity'
+
+const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures')
 
 /**
  * Phase 22.5 — REAL local integration verification.
@@ -310,6 +315,49 @@ test.describe('local integration — tasks (real backend, full lifecycle)', () =
     await page.getByRole('dialog').getByRole('button', { name: 'Cancel task' }).click()
     await expect(page.getByRole('main').getByText('CANCELLED', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Edit' })).toHaveCount(0)
+  })
+})
+
+test.describe('local integration — documents (real backend, full lifecycle)', () => {
+  test('upload a real document, verify it exists as UPLOADED, download it, then delete it', async ({ page }) => {
+    await realLogin(page, OWNER)
+    await goTo(page, 'Documents', '/documents')
+
+    await page.getByRole('button', { name: 'Upload document' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    // A real .txt upload, no magic-byte ambiguity — the real backend's
+    // DocumentValidator has no signature check for text/plain, making this
+    // the most reliable fixture against the real, unmocked API.
+    await page.getByLabel('File').setInputFiles(path.join(FIXTURES, 'sample.txt'))
+    await page.getByRole('button', { name: 'Upload' }).click()
+    await expect(page.getByRole('dialog')).not.toBeVisible()
+
+    await expect(page.getByRole('table').getByText('sample.txt')).toBeVisible()
+
+    await page.getByRole('table').getByRole('link', { name: 'sample.txt' }).click()
+    await expect(page.getByRole('heading', { name: 'sample.txt' })).toBeVisible()
+    // bizpilot.ai.enabled=false in this local environment (confirmed by the
+    // real "AI features aren't enabled" behavior already proven for Lead AI
+    // scoring) — a real upload here never progresses past UPLOADED. This
+    // assertion is the honest, real-backend outcome, not a fabricated
+    // COMPLETED state.
+    await expect(page.getByRole('main').getByText('UPLOADED', { exact: true })).toBeVisible()
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('button', { name: 'Download' }).click(),
+    ])
+    expect(download.suggestedFilename()).toBe('sample.txt')
+    const downloadPath = await download.path()
+    expect(downloadPath).toBeTruthy()
+    const fs = await import('node:fs')
+    const stats = fs.statSync(downloadPath!)
+    expect(stats.size).toBeGreaterThan(0)
+
+    await page.getByRole('button', { name: 'Delete' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Delete document' }).click()
+    await page.waitForURL('**/documents')
+    await expect(page.getByRole('table').getByText('sample.txt')).toHaveCount(0)
   })
 })
 
