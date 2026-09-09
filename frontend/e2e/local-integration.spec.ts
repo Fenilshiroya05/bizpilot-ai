@@ -282,6 +282,37 @@ test.describe('local integration — quotations (real backend, full lifecycle)',
   })
 })
 
+test.describe('local integration — tasks (real backend, full lifecycle)', () => {
+  test('create, assign to self, update, and cancel a real task', async ({ page }) => {
+    await realLogin(page, OWNER)
+    await goTo(page, 'Tasks', '/tasks')
+
+    const uniqueTitle = `Local Integration Task ${Date.now()}`
+    await page.getByRole('button', { name: 'Create task' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.getByLabel('Title').fill(uniqueTitle)
+    await page.getByRole('dialog').getByRole('button', { name: 'Create task' }).click()
+    await expect(page.getByRole('table').getByText(uniqueTitle)).toBeVisible()
+
+    await page.getByRole('table').getByRole('link', { name: uniqueTitle }).click()
+    await expect(page.getByRole('heading', { name: uniqueTitle })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Assign to me' }).click()
+    await expect(page.getByRole('main').getByText('Assigned to you')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Edit' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.getByRole('dialog').getByLabel('Status').selectOption('IN_PROGRESS')
+    await page.getByRole('dialog').getByRole('button', { name: 'Save changes' }).click()
+    await expect(page.getByRole('main').getByText('IN PROGRESS')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Cancel task' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel task' }).click()
+    await expect(page.getByRole('main').getByText('CANCELLED', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Edit' })).toHaveCount(0)
+  })
+})
+
 test.describe('local integration — RBAC (real backend authorization, not just UI hiding)', () => {
   test('SALES: can create/edit quotations, cannot cancel; cannot deactivate products', async ({ page }) => {
     await realLogin(page, SALES)

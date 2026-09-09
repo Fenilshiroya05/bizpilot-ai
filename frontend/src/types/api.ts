@@ -412,3 +412,80 @@ export interface QuotationListParams {
   size?: number
   sort?: string
 }
+
+// ---- tasks/entity/{TaskStatus,TaskPriority}.java ----
+export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
+export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
+
+// ---- tasks/dto/TaskResponse.java ----
+// A single response shape for both the single-resource endpoint and the
+// paginated list — unlike Quotation/Invoice, Task has no lazy child
+// collection, so there is no summary/detail split to make.
+export interface TaskResponse {
+  id: string
+  title: string
+  description: string | null
+  status: TaskStatus
+  priority: TaskPriority
+  assignedToUserId: string | null
+  customerId: string | null
+  leadId: string | null
+  dueDate: string | null
+  notes: string | null
+  organizationId: string
+  createdAt: string
+  updatedAt: string
+}
+
+// ---- tasks/dto/TaskCreateRequest.java ----
+// status/assignedToUserId/notes are deliberately absent — status always
+// starts at TODO, assignment only ever happens through the dedicated
+// /assign endpoint (even at creation), and notes has no field on create at
+// all (verified directly against the backend DTO).
+export interface TaskCreateRequest {
+  title: string
+  description?: string
+  priority?: TaskPriority
+  dueDate?: string
+  customerId?: string
+  leadId?: string
+}
+
+// ---- tasks/dto/TaskUpdateRequest.java (PATCH: omitted/undefined = unchanged) ----
+// clearDueDate/clearCustomerId/clearLeadId mirror LeadUpdateRequest's
+// clearFollowUpDate pattern — the explicit signal needed to clear an
+// optional field. assignedToUserId is deliberately absent (dedicated
+// /assign endpoint only). status accepts every value except CANCELLED —
+// reaching CANCELLED is only possible via DELETE.
+export interface TaskUpdateRequest {
+  title?: string
+  description?: string
+  priority?: TaskPriority
+  dueDate?: string
+  clearDueDate?: boolean
+  customerId?: string
+  clearCustomerId?: boolean
+  leadId?: string
+  clearLeadId?: boolean
+  status?: TaskStatus
+  notes?: string
+}
+
+// ---- tasks/dto/TaskAssignRequest.java ----
+export interface TaskAssignRequest {
+  assigneeUserId: string | null
+}
+
+export interface TaskListParams {
+  q?: string
+  status?: TaskStatus
+  priority?: TaskPriority
+  assignedToUserId?: string
+  unassigned?: boolean
+  customerId?: string
+  leadId?: string
+  dueDateOnOrBefore?: string
+  page?: number
+  size?: number
+  sort?: string
+}

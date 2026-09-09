@@ -46,6 +46,12 @@ const QuotationDetailPage = lazy(() =>
 const QuotationFormPage = lazy(() =>
   import('@/features/quotations/QuotationFormPage').then((m) => ({ default: m.QuotationFormPage })),
 )
+const TasksListPage = lazy(() =>
+  import('@/features/tasks/TasksListPage').then((m) => ({ default: m.TasksListPage })),
+)
+const TaskDetailPage = lazy(() =>
+  import('@/features/tasks/TaskDetailPage').then((m) => ({ default: m.TaskDetailPage })),
+)
 
 function PageFallback() {
   return (
@@ -160,7 +166,15 @@ export const router = createBrowserRouter([
             path: '/tasks',
             element: (
               <RequirePermission permission="TASK_READ">
-                <ComingSoon title="Tasks" phase="Phase 23" />
+                {withSuspense(<TasksListPage />)}
+              </RequirePermission>
+            ),
+          },
+          {
+            path: '/tasks/:id',
+            element: (
+              <RequirePermission permission="TASK_READ">
+                {withSuspense(<TaskDetailPage />)}
               </RequirePermission>
             ),
           },

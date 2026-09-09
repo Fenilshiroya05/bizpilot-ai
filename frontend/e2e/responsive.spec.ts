@@ -5,6 +5,7 @@ import {
   goToLeads,
   goToProducts,
   goToQuotations,
+  goToTasks,
   loginViaUi,
   mockAuthenticatedSession,
   mockCustomersResource,
@@ -12,9 +13,11 @@ import {
   mockLeadScoreSuccess,
   mockProductsResource,
   mockQuotationsResource,
+  mockTasksResource,
   TEST_CUSTOMER,
   TEST_LEAD,
   TEST_PRODUCT,
+  TEST_TASK,
 } from './mocks'
 import { attachConsoleGuard, horizontalOverflowPx } from './sanity'
 
@@ -310,6 +313,58 @@ test.describe('responsive — products and quotations (Phase 22)', () => {
       await page.setViewportSize({ width, height })
       expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
       await page.screenshot({ path: `test-results/screenshots/quotation-form-${width}x${height}.png`, fullPage: true })
+    }
+  })
+})
+
+test.describe('responsive — tasks (Phase 23)', () => {
+  test('tasks list: table on desktop, cards on mobile, no horizontal overflow, screenshots', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await mockTasksResource(page, [TEST_TASK])
+    await loginViaUi(page)
+    await goToTasks(page)
+
+    for (const { width, height } of [...DESKTOP_BREAKPOINTS, ...MOBILE_BREAKPOINTS]) {
+      await page.setViewportSize({ width, height })
+      await expect(page.getByRole('heading', { name: 'Tasks' })).toBeVisible()
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/tasks-list-${width}x${height}.png`, fullPage: true })
+    }
+
+    // At a mobile width, the desktop table is not in the accessible tree —
+    // the row is reachable only via the stacked card link.
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect(page.getByRole('table')).not.toBeVisible()
+    await expect(page.getByRole('link', { name: new RegExp(TEST_TASK.title) })).toBeVisible()
+  })
+
+  test('task detail: single column on mobile, no horizontal overflow, screenshots', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await mockTasksResource(page, [TEST_TASK])
+    await loginViaUi(page)
+    await goToTasks(page)
+    await page.getByRole('table').getByRole('link', { name: TEST_TASK.title }).click()
+    await expect(page.getByRole('heading', { name: TEST_TASK.title })).toBeVisible()
+
+    for (const { width, height } of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize({ width, height })
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/task-detail-${width}x${height}.png`, fullPage: true })
+    }
+  })
+
+  test('task create dialog: responsive layout, no horizontal overflow, screenshots', async ({ page }) => {
+    await mockAuthenticatedSession(page)
+    await mockTasksResource(page, [])
+    await loginViaUi(page)
+    await goToTasks(page)
+    await page.getByRole('button', { name: 'Create task' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    for (const { width, height } of [...DESKTOP_BREAKPOINTS, ...MOBILE_BREAKPOINTS]) {
+      await page.setViewportSize({ width, height })
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/task-form-${width}x${height}.png`, fullPage: true })
     }
   })
 })

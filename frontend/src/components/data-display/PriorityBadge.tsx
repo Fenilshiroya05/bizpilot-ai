@@ -1,19 +1,22 @@
-import type { LeadPriority } from '@/types/api'
+import type { LeadPriority, TaskPriority } from '@/types/api'
 import { cn } from '@/lib/utils'
 
 /**
  * Deliberately visually distinct from StatusBadge (a dot + label, not a
- * plain tinted pill) so a lead's priority is never confused with its status
- * at a glance — both still communicate meaning through text, never color
- * alone.
+ * plain tinted pill) so an entity's priority is never confused with its
+ * status at a glance — both still communicate meaning through text, never
+ * color alone. Shared across Lead (LOW/MEDIUM/HIGH) and Task
+ * (LOW/MEDIUM/HIGH/URGENT) — the two enums overlap on their first three
+ * values, so one lookup covers both rather than a duplicated component.
  */
-const PRIORITY_STYLES: Record<LeadPriority, { dot: string; text: string }> = {
+const PRIORITY_STYLES: Record<LeadPriority | TaskPriority, { dot: string; text: string }> = {
   LOW: { dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
   MEDIUM: { dot: 'bg-info', text: 'text-info' },
   HIGH: { dot: 'bg-warning', text: 'text-warning' },
+  URGENT: { dot: 'bg-destructive', text: 'text-destructive' },
 }
 
-export function PriorityBadge({ priority }: { priority: LeadPriority }) {
+export function PriorityBadge({ priority }: { priority: LeadPriority | TaskPriority }) {
   const style = PRIORITY_STYLES[priority]
   return (
     <span className={cn('inline-flex items-center gap-1.5 text-xs font-medium', style.text)}>

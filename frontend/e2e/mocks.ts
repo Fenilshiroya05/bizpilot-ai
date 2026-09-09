@@ -155,6 +155,11 @@ export async function goToQuotations(page: Page) {
   await page.waitForURL('**/quotations')
 }
 
+export async function goToTasks(page: Page) {
+  await page.getByRole('complementary').getByRole('link', { name: 'Tasks' }).click()
+  await page.waitForURL('**/tasks')
+}
+
 // ---------------------------------------------------------------------------
 // Phase 21 — Customers / Leads / AI Lead Scoring fixtures
 // ---------------------------------------------------------------------------
@@ -867,4 +872,128 @@ export async function mockQuotationsResource(
   })
 
   return { quotations }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 23 — Tasks fixtures
+// ---------------------------------------------------------------------------
+
+export const TEST_TASK = {
+  id: 'e2e-task-1',
+  title: 'Follow up with customer',
+  description: 'Call about the renewal.' as string | null,
+  status: 'TODO' as string,
+  priority: 'MEDIUM' as string,
+  assignedToUserId: null as string | null,
+  customerId: null as string | null,
+  leadId: null as string | null,
+  dueDate: null as string | null,
+  notes: null as string | null,
+  organizationId: TEST_USER.organizationId,
+  createdAt: '2026-01-01T00:00:00Z',
+  updatedAt: '2026-01-01T00:00:00Z',
+}
+
+/**
+ * A small, real, in-memory CRUD simulation behind `page.route` — same
+ * rationale as {@link mockLeadsResource}. `customerId`/`leadId` on a seed
+ * task are trusted verbatim (no cross-check against a customers/leads
+ * fixture) since this mock only needs to prove the Task UI round-trips
+ * whatever the backend would return, not re-validate referential integrity
+ * the real backend already owns.
+ */
+export async function mockTasksResource(page: Page, initial: (typeof TEST_TASK)[] = [TEST_TASK]) {
+  const tasks = initial.map((t) => ({ ...t }))
+  let nextId = tasks.length + 1
+
+  await page.route('**/api/v1/tasks*', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (request.method() === 'GET') {
+      const status = url.searchParams.get('status')
+      const priority = url.searchParams.get('priority')
+      const assignedToUserId = url.searchParams.get('assignedToUserId')
+      const unassigned = url.searchParams.get('unassigned') === 'true'
+      const dueDateOnOrBefore = url.searchParams.get('dueDateOnOrBefore')
+      const q = url.searchParams.get('q')?.toLowerCase()
+
+      let filtered = [...tasks]
+      if (status) filtered = filtered.filter((t) => t.status === status)
+      if (priority) filtered = filtered.filter((t) => t.priority === priority)
+      if (assignedToUserId) filtered = filtered.filter((t) => t.assignedToUserId === assignedToUserId)
+      if (unassigned) filtered = filtered.filter((t) => t.assignedToUserId === null)
+      if (dueDateOnOrBefore) filtered = filtered.filter((t) => t.dueDate && t.dueDate <= dueDateOnOrBefore)
+      if (q) filtered = filtered.filter((t) => t.title.toLowerCase().includes(q))
+
+      const page = Number(url.searchParams.get('page') ?? '0')
+      const size = Number(url.searchParams.get('size') ?? '20')
+      return json(route, 200, pageOf(filtered, page, size))
+    }
+    if (request.method() === 'POST') {
+      const body = (request.postDataJSON() ?? {}) as Record<string, string | undefined>
+      if (!body.title || body.title.trim() === '') {
+        return json(route, 400, apiError(400, 'INVALID_TASK_DATA', 'title cannot be blank', url.pathname))
+      }
+      const now = new Date().toISOString()
+      const created = {
+        id: `e2e-task-${nextId++}`,
+        title: body.title,
+        description: body.description || null,
+        status: 'TODO',
+        priority: body.priority || 'MEDIUM',
+        assignedToUserId: null,
+        customerId: body.customerId || null,
+        leadId: body.leadId || null,
+        dueDate: body.dueDate || null,
+        notes: null,
+        organizationId: TEST_USER.organizationId,
+        createdAt: now,
+        updatedAt: now,
+      }
+      tasks.push(created)
+      return json(route, 201, created)
+    }
+    return route.fallback()
+  })
+
+  await page.route('**/api/v1/tasks/*/assign', async (route) => {
+    const id = new URL(route.request().url()).pathname.split('/')[4] ?? ''
+    const task = tasks.find((t) => t.id === id)
+    if (!task) return json(route, 404, apiError(404, 'TASK_NOT_FOUND', 'Task not found', route.request().url()))
+    const body = (route.request().postDataJSON() ?? {}) as { assigneeUserId: string | null }
+    task.assignedToUserId = body.assigneeUserId
+    task.updatedAt = new Date().toISOString()
+    return json(route, 200, task)
+  })
+
+  await page.route('**/api/v1/tasks/*', async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    const id = pathname.split('/').pop()
+    const task = tasks.find((t) => t.id === id)
+    if (!task) return json(route, 404, apiError(404, 'TASK_NOT_FOUND', 'Task not found', pathname))
+
+    if (request.method() === 'GET') return json(route, 200, task)
+    if (request.method() === 'PATCH') {
+      const body = (request.postDataJSON() ?? {}) as Record<string, unknown>
+      for (const key of ['title', 'description', 'priority', 'status', 'notes'] as const) {
+        if (body[key] !== undefined) (task as Record<string, unknown>)[key] = body[key]
+      }
+      if (body.clearDueDate) task.dueDate = null
+      else if (typeof body.dueDate === 'string') task.dueDate = body.dueDate
+      if (body.clearCustomerId) task.customerId = null
+      else if (typeof body.customerId === 'string') task.customerId = body.customerId
+      if (body.clearLeadId) task.leadId = null
+      else if (typeof body.leadId === 'string') task.leadId = body.leadId
+      task.updatedAt = new Date().toISOString()
+      return json(route, 200, task)
+    }
+    if (request.method() === 'DELETE') {
+      task.status = 'CANCELLED'
+      return route.fulfill({ status: 204 })
+    }
+    return route.fallback()
+  })
+
+  return { tasks }
 }
