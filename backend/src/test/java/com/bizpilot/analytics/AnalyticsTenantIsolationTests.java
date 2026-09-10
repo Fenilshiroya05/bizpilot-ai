@@ -2,6 +2,7 @@ package com.bizpilot.analytics;
 
 import com.bizpilot.TestcontainersConfiguration;
 import com.bizpilot.analytics.dto.AnalyticsSummaryResponse;
+import com.bizpilot.analytics.dto.TopCustomerResponse;
 import com.bizpilot.identity.entity.User;
 import com.bizpilot.identity.entity.UserRole;
 import com.bizpilot.identity.repository.RoleRepository;
@@ -28,6 +29,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -110,7 +112,47 @@ class AnalyticsTenantIsolationTests {
         assertThat(summaryB.revenue()).isEqualByComparingTo("1000.0000");
     }
 
+    /**
+     * Phase 26: the top-customers widget independently proven tenant-safe —
+     * exact-value assertions, not merely "the request succeeded."
+     */
+    @Test
+    void topCustomersReflectsOnlyItsOwnOrganizationsInvoices() {
+        String tokenA = managerToken("analytics-topcust-isoA@example.com", "Analytics Top Customers Iso Org A");
+        String tokenB = managerToken("analytics-topcust-isoB@example.com", "Analytics Top Customers Iso Org B");
+
+        String productA = createProduct(tokenA, "SKU-TOPISO-A");
+        String customerA = createCustomer(tokenA, "Org A Top Customer").id().toString();
+        payInvoice(tokenA, customerA, productA, new BigDecimal("5")); // 500
+
+        String productB = createProduct(tokenB, "SKU-TOPISO-B");
+        String customerB = createCustomer(tokenB, "Org B Top Customer").id().toString();
+        payInvoice(tokenB, customerB, productB, new BigDecimal("20")); // 2000
+
+        List<TopCustomerResponse> topCustomersA = getTopCustomers(tokenA);
+        List<TopCustomerResponse> topCustomersB = getTopCustomers(tokenB);
+
+        assertThat(topCustomersA).hasSize(1);
+        assertThat(topCustomersA.get(0).customerName()).isEqualTo("Org A Top Customer");
+        assertThat(topCustomersA.get(0).revenue()).isEqualByComparingTo("500.0000");
+
+        assertThat(topCustomersB).hasSize(1);
+        assertThat(topCustomersB.get(0).customerName()).isEqualTo("Org B Top Customer");
+        assertThat(topCustomersB.get(0).revenue()).isEqualByComparingTo("2000.0000");
+    }
+
     // ---- Helpers -----------------------------------------------------------------
+
+    private List<TopCustomerResponse> getTopCustomers(String token) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        ResponseEntity<List<TopCustomerResponse>> response = restTemplate.exchange(
+                url("/api/v1/analytics/top-customers"), HttpMethod.GET, new HttpEntity<>(headers),
+                new ParameterizedTypeReference<List<TopCustomerResponse>>() {
+                });
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        return response.getBody();
+    }
 
     private AnalyticsSummaryResponse getSummary(String token) {
         HttpHeaders headers = new HttpHeaders();

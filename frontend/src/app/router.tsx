@@ -87,7 +87,14 @@ export const router = createBrowserRouter([
       {
         element: <AppShell />,
         children: [
-          { path: '/dashboard', element: withSuspense(<DashboardPage />) },
+          {
+            path: '/dashboard',
+            element: (
+              <RequirePermission permission="ANALYTICS_READ">
+                {withSuspense(<DashboardPage />)}
+              </RequirePermission>
+            ),
+          },
           {
             path: '/customers',
             element: (

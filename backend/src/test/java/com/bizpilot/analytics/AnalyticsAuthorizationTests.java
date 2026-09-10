@@ -25,6 +25,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -97,6 +99,43 @@ class AnalyticsAuthorizationTests {
         }
     }
 
+    /**
+     * Phase 26: the same {@code ANALYTICS_READ} gate, independently proven
+     * on every new chart/widget endpoint — not just {@code /summary}.
+     */
+    private static final List<String> PHASE_26_ENDPOINTS = List.of(
+            "/api/v1/analytics/revenue-trend",
+            "/api/v1/analytics/lead-funnel",
+            "/api/v1/analytics/lead-sources",
+            "/api/v1/analytics/sales-pipeline",
+            "/api/v1/analytics/top-customers");
+
+    @Test
+    void everyPhase26EndpointRejectsAnUnauthenticatedRequest() {
+        for (String path : PHASE_26_ENDPOINTS) {
+            ResponseEntity<ApiError> response = restTemplate.exchange(
+                    url(path), HttpMethod.GET, HttpEntity.EMPTY, ApiError.class);
+
+            assertThat(response.getStatusCode()).as("path %s", path).isEqualTo(HttpStatus.UNAUTHORIZED);
+        }
+    }
+
+    @Test
+    void everySeededRoleHasAnalyticsReadOnEveryPhase26Endpoint() {
+        for (UserRole role : UserRole.values()) {
+            String token = promotedToken("analytics26-" + role.name().toLowerCase() + "@example.com",
+                    "Analytics 26 " + role.name() + " Org", role);
+
+            for (String path : PHASE_26_ENDPOINTS) {
+                ResponseEntity<String> response = getPathWithToken(token, path);
+
+                assertThat(response.getStatusCode())
+                        .as("role %s must have ANALYTICS_READ on %s", role, path)
+                        .isEqualTo(HttpStatus.OK);
+            }
+        }
+    }
+
     // ---- Helpers -----------------------------------------------------------------
 
     private <T> ResponseEntity<T> getWithToken(String token, Class<T> responseType) {
@@ -104,6 +143,12 @@ class AnalyticsAuthorizationTests {
         headers.setBearerAuth(token);
         return restTemplate.exchange(url("/api/v1/analytics/summary"), HttpMethod.GET,
                 new HttpEntity<>(headers), responseType);
+    }
+
+    private ResponseEntity<String> getPathWithToken(String token, String path) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        return restTemplate.exchange(url(path), HttpMethod.GET, new HttpEntity<>(headers), String.class);
     }
 
     private String registerAndLogin(String email, String organizationName) {

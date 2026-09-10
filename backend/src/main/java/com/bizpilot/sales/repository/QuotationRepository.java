@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -65,4 +66,20 @@ public interface QuotationRepository extends JpaRepository<Quotation, UUID> {
                             @Param("customerId") UUID customerId,
                             @Param("validUntilBefore") LocalDate validUntilBefore,
                             Pageable pageable);
+
+    /**
+     * Phase 26 (CLAUDE.md §22 "sales pipeline" chart): grouped quotation
+     * count and total {@code grandTotal} per {@code status} — the actual
+     * quotation lifecycle status is the pipeline "stage" model in this
+     * domain; there is no separate sales-stage concept to represent instead.
+     * Only statuses with at least one matching quotation appear in the
+     * result.
+     */
+    @Query("""
+            SELECT q.status AS status, COUNT(q) AS count, SUM(q.grandTotal) AS amount
+            FROM Quotation q
+            WHERE q.organization.id = :organizationId
+            GROUP BY q.status
+            """)
+    List<QuotationPipelineRow> countAndSumGroupedByStatus(@Param("organizationId") UUID organizationId);
 }

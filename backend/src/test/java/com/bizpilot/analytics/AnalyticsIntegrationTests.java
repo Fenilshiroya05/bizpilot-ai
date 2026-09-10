@@ -2,6 +2,11 @@ package com.bizpilot.analytics;
 
 import com.bizpilot.TestcontainersConfiguration;
 import com.bizpilot.analytics.dto.AnalyticsSummaryResponse;
+import com.bizpilot.analytics.dto.LeadFunnelStageResponse;
+import com.bizpilot.analytics.dto.LeadSourceBreakdownResponse;
+import com.bizpilot.analytics.dto.RevenueTrendPointResponse;
+import com.bizpilot.analytics.dto.SalesPipelineStageResponse;
+import com.bizpilot.analytics.dto.TopCustomerResponse;
 import com.bizpilot.crm.dto.CustomerCreateRequest;
 import com.bizpilot.crm.dto.CustomerResponse;
 import com.bizpilot.crm.dto.CustomerUpdateRequest;
@@ -19,9 +24,14 @@ import com.bizpilot.sales.dto.InvoiceUpdateRequest;
 import com.bizpilot.sales.dto.LeadCreateRequest;
 import com.bizpilot.sales.dto.LeadResponse;
 import com.bizpilot.sales.dto.LeadUpdateRequest;
+import com.bizpilot.sales.dto.QuotationCreateRequest;
+import com.bizpilot.sales.dto.QuotationItemRequest;
+import com.bizpilot.sales.dto.QuotationResponse;
+import com.bizpilot.sales.dto.QuotationUpdateRequest;
 import com.bizpilot.sales.entity.InvoiceStatus;
 import com.bizpilot.sales.entity.LeadSource;
 import com.bizpilot.sales.entity.LeadStatus;
+import com.bizpilot.sales.entity.QuotationStatus;
 import com.bizpilot.security.dto.AuthResponse;
 import com.bizpilot.security.dto.LoginRequest;
 import com.bizpilot.security.dto.RegisterRequest;
@@ -31,6 +41,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -305,7 +316,182 @@ class AnalyticsIntegrationTests {
         assertThat(reloadedInvoice.updatedAt()).isEqualTo(invoice.updatedAt());
     }
 
+    // ---- Phase 26 chart/widget aggregates -----------------------------------------
+
+    @Test
+    void revenueTrendReturnsExactlyThirtyDaysAllZeroForATenantWithNoInvoices() {
+        String token = managerToken("analytics-trend-zero@example.com", "Analytics Trend Zero Org");
+
+        List<RevenueTrendPointResponse> trend = getRevenueTrend(token);
+
+        assertThat(trend).hasSize(30);
+        assertThat(trend.get(29).period()).isEqualTo(LocalDate.now());
+        assertThat(trend).allSatisfy(point -> assertThat(point.revenue()).isEqualByComparingTo("0.0000"));
+    }
+
+    @Test
+    void revenueTrendIncludesATodaysPaidInvoiceInItsLastPoint() {
+        String token = managerToken("analytics-trend-today@example.com", "Analytics Trend Today Org");
+        String productId = createProduct(token, "SKU-TREND-1");
+        String customerId = createCustomer(token, "Trend Customer").id().toString();
+        createInvoiceWithStatus(token, customerId, productId, new BigDecimal("7"), InvoiceStatus.PAID); // 700
+
+        List<RevenueTrendPointResponse> trend = getRevenueTrend(token);
+
+        RevenueTrendPointResponse todayPoint = trend.get(trend.size() - 1);
+        assertThat(todayPoint.period()).isEqualTo(LocalDate.now());
+        assertThat(todayPoint.revenue()).isEqualByComparingTo("700.0000");
+    }
+
+    @Test
+    void leadFunnelReflectsTheCurrentStatusOfEveryLead() {
+        String token = managerToken("analytics-funnel@example.com", "Analytics Funnel Org");
+        createLead(token, "New Lead");
+        transitionLead(token, createLead(token, "Qualified Lead"), LeadStatus.QUALIFIED);
+        transitionLead(token, createLead(token, "Won Lead 1"), LeadStatus.WON);
+        transitionLead(token, createLead(token, "Won Lead 2"), LeadStatus.WON);
+
+        List<LeadFunnelStageResponse> funnel = getLeadFunnel(token);
+
+        assertThat(funnel).hasSize(LeadStatus.values().length);
+        assertThat(stageCount(funnel, LeadStatus.NEW)).isEqualTo(1L);
+        assertThat(stageCount(funnel, LeadStatus.QUALIFIED)).isEqualTo(1L);
+        assertThat(stageCount(funnel, LeadStatus.WON)).isEqualTo(2L);
+        assertThat(stageCount(funnel, LeadStatus.LOST)).isZero();
+    }
+
+    @Test
+    void leadSourcesGroupsBySourceAndOmitsSourcesWithNoLeads() {
+        String token = managerToken("analytics-sources@example.com", "Analytics Sources Org");
+        createLeadWithSource(token, "Website Lead 1", LeadSource.WEBSITE);
+        createLeadWithSource(token, "Website Lead 2", LeadSource.WEBSITE);
+        createLeadWithSource(token, "Referral Lead", LeadSource.REFERRAL);
+
+        List<LeadSourceBreakdownResponse> sources = getLeadSources(token);
+
+        assertThat(sources).hasSize(2);
+        assertThat(sourceCount(sources, LeadSource.WEBSITE)).isEqualTo(2L);
+        assertThat(sourceCount(sources, LeadSource.REFERRAL)).isEqualTo(1L);
+        assertThat(sources).noneMatch(row -> row.source() == LeadSource.PHONE);
+    }
+
+    @Test
+    void salesPipelineGroupsQuotationsByStatusWithCountAndAmount() {
+        String token = managerToken("analytics-pipeline@example.com", "Analytics Pipeline Org");
+        String productId = createProduct(token, "SKU-PIPE-1");
+        String customerId = createCustomer(token, "Pipeline Customer").id().toString();
+        createQuotation(token, customerId, productId, new BigDecimal("2")); // DRAFT, 200
+        QuotationResponse toAccept = createQuotation(token, customerId, productId, new BigDecimal("3")); // 300
+        transitionQuotation(token, toAccept.id(), QuotationStatus.ACCEPTED);
+
+        List<SalesPipelineStageResponse> pipeline = getSalesPipeline(token);
+
+        assertThat(pipeline).hasSize(2);
+        SalesPipelineStageResponse draftStage = pipeline.stream()
+                .filter(stage -> stage.status() == QuotationStatus.DRAFT).findFirst().orElseThrow();
+        assertThat(draftStage.count()).isEqualTo(1L);
+        assertThat(draftStage.amount()).isEqualByComparingTo("200.0000");
+        SalesPipelineStageResponse acceptedStage = pipeline.stream()
+                .filter(stage -> stage.status() == QuotationStatus.ACCEPTED).findFirst().orElseThrow();
+        assertThat(acceptedStage.count()).isEqualTo(1L);
+        assertThat(acceptedStage.amount()).isEqualByComparingTo("300.0000");
+    }
+
+    @Test
+    void topCustomersRanksByPaidRevenueDescendingAndCapsAtFive() {
+        String token = managerToken("analytics-topcustomers@example.com", "Analytics Top Customers Org");
+        String productId = createProduct(token, "SKU-TOP-1");
+        for (int i = 1; i <= 6; i++) {
+            String customerId = createCustomer(token, "Top Customer " + i).id().toString();
+            createInvoiceWithStatus(token, customerId, productId, BigDecimal.valueOf(i), InvoiceStatus.PAID);
+        }
+
+        List<TopCustomerResponse> topCustomers = getTopCustomers(token);
+
+        assertThat(topCustomers).hasSize(5);
+        assertThat(topCustomers.get(0).customerName()).isEqualTo("Top Customer 6");
+        assertThat(topCustomers.get(0).revenue()).isEqualByComparingTo("600.0000");
+        assertThat(topCustomers).extracting(TopCustomerResponse::customerName)
+                .doesNotContain("Top Customer 1");
+    }
+
     // ---- Helpers -----------------------------------------------------------------
+
+    private static long stageCount(List<LeadFunnelStageResponse> funnel, LeadStatus status) {
+        return funnel.stream().filter(stage -> stage.status() == status).findFirst()
+                .map(LeadFunnelStageResponse::count).orElse(0L);
+    }
+
+    private static long sourceCount(List<LeadSourceBreakdownResponse> sources, LeadSource source) {
+        return sources.stream().filter(row -> row.source() == source).findFirst()
+                .map(LeadSourceBreakdownResponse::count).orElse(0L);
+    }
+
+    private List<RevenueTrendPointResponse> getRevenueTrend(String token) {
+        return getList(token, "/api/v1/analytics/revenue-trend", new ParameterizedTypeReference<>() {
+        });
+    }
+
+    private List<LeadFunnelStageResponse> getLeadFunnel(String token) {
+        return getList(token, "/api/v1/analytics/lead-funnel", new ParameterizedTypeReference<>() {
+        });
+    }
+
+    private List<LeadSourceBreakdownResponse> getLeadSources(String token) {
+        return getList(token, "/api/v1/analytics/lead-sources", new ParameterizedTypeReference<>() {
+        });
+    }
+
+    private List<SalesPipelineStageResponse> getSalesPipeline(String token) {
+        return getList(token, "/api/v1/analytics/sales-pipeline", new ParameterizedTypeReference<>() {
+        });
+    }
+
+    private List<TopCustomerResponse> getTopCustomers(String token) {
+        return getList(token, "/api/v1/analytics/top-customers", new ParameterizedTypeReference<>() {
+        });
+    }
+
+    private <T> List<T> getList(String token, String path, ParameterizedTypeReference<List<T>> responseType) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        ResponseEntity<List<T>> response = restTemplate.exchange(
+                url(path), HttpMethod.GET, new HttpEntity<>(headers), responseType);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        return response.getBody();
+    }
+
+    private LeadResponse createLeadWithSource(String token, String name, LeadSource source) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        LeadCreateRequest request = new LeadCreateRequest(name, null, null, null, source, null, null);
+        ResponseEntity<LeadResponse> response = restTemplate.postForEntity(
+                url("/api/v1/leads"), new HttpEntity<>(request, headers), LeadResponse.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        return response.getBody();
+    }
+
+    /** Creates a DRAFT quotation (product priced at 100.00/unit, 0% tax, no discount) so its {@code grandTotal = quantity * 100}. */
+    private QuotationResponse createQuotation(String token, String customerId, String productId, BigDecimal quantity) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        QuotationCreateRequest request = new QuotationCreateRequest(UUID.fromString(customerId), null, null,
+                List.of(new QuotationItemRequest(UUID.fromString(productId), quantity)));
+        ResponseEntity<QuotationResponse> response = restTemplate.postForEntity(
+                url("/api/v1/quotations"), new HttpEntity<>(request, headers), QuotationResponse.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        return response.getBody();
+    }
+
+    private void transitionQuotation(String token, UUID id, QuotationStatus targetStatus) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        QuotationUpdateRequest patch = new QuotationUpdateRequest(null, null, false, null, targetStatus, null);
+        ResponseEntity<QuotationResponse> response = restTemplate.exchange(
+                url("/api/v1/quotations/" + id), HttpMethod.PATCH, new HttpEntity<>(patch, headers),
+                QuotationResponse.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
 
     private AnalyticsSummaryResponse getSummary(String token) {
         HttpHeaders headers = new HttpHeaders();

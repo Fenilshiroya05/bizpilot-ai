@@ -120,4 +120,42 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
             """)
     BigDecimal sumTotalByStatuses(@Param("organizationId") UUID organizationId,
                                    @Param("statuses") List<InvoiceStatus> statuses);
+
+    /**
+     * Phase 26 (CLAUDE.md §22 "revenue trend" chart): every PAID invoice's
+     * {@code createdAt}/{@code total} on or after {@code since} — the same
+     * "revenue" definition as {@link #sumPaidTotalCreatedOnOrAfter} (PAID
+     * only). Bucketed into daily points in {@code AnalyticsService} (plain
+     * Java, not a database-specific date-truncation function), keeping this
+     * query portable and consistent with every other query in this
+     * repository.
+     */
+    @Query("""
+            SELECT i.createdAt AS createdAt, i.total AS total FROM Invoice i
+            WHERE i.organization.id = :organizationId
+              AND i.status = com.bizpilot.sales.entity.InvoiceStatus.PAID
+              AND i.createdAt >= :since
+            ORDER BY i.createdAt ASC
+            """)
+    List<InvoiceRevenuePoint> findPaidRevenuePointsCreatedOnOrAfter(@Param("organizationId") UUID organizationId,
+                                                                     @Param("since") Instant since);
+
+    /**
+     * Phase 26 (CLAUDE.md §22 "top customers" widget): total PAID-invoice
+     * revenue per customer, all-time (not the 30-day window used elsewhere
+     * in this repository) — "top customers" is a lifetime-value ranking, a
+     * distinct and separately documented definition from {@link
+     * #sumPaidTotalCreatedOnOrAfter}. {@code pageable} is expected to be an
+     * unsorted, size-bounded request (e.g. {@code PageRequest.of(0, 5)}); the
+     * query's own {@code ORDER BY} governs ranking, never the caller's sort.
+     */
+    @Query("""
+            SELECT c.id AS customerId, c.name AS customerName, SUM(i.total) AS revenue FROM Invoice i
+            JOIN i.customer c
+            WHERE i.organization.id = :organizationId
+              AND i.status = com.bizpilot.sales.entity.InvoiceStatus.PAID
+            GROUP BY c.id, c.name
+            ORDER BY SUM(i.total) DESC
+            """)
+    List<CustomerRevenueRow> findTopCustomersByRevenue(@Param("organizationId") UUID organizationId, Pageable pageable);
 }

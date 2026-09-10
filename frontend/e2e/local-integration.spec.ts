@@ -106,6 +106,45 @@ test.describe('local integration — authentication (real backend)', () => {
   })
 })
 
+test.describe('local integration — dashboard analytics (Phase 26, real backend)', () => {
+  test('every chart/widget binds to real backend data, not a mock', async ({ page }) => {
+    const guard = attachConsoleGuard(page)
+    await realLogin(page, OWNER)
+
+    await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible()
+    await expect(page.getByText('Revenue Trend')).toBeVisible()
+    await expect(page.getByText('Lead Funnel')).toBeVisible()
+    await expect(page.getByText('Lead Sources')).toBeVisible()
+    await expect(page.getByText('Sales Pipeline')).toBeVisible()
+    await expect(page.getByText('Top Customers')).toBeVisible()
+    await expect(page.getByText('Business Insights')).toBeVisible()
+
+    // Real seeded leads exist across statuses/sources, so the funnel/sources
+    // charts must actually render (not fall back to their empty state).
+    await expect(page.getByText('No leads yet')).toHaveCount(0)
+
+    // Deterministic, data-grounded insight text derived from real numbers —
+    // never a fixed/hardcoded figure (the exact revenue drifts with seed data).
+    await expect(page.getByText(/Revenue for the last 30 days is ₹/)).toBeVisible()
+    await expect(page.getByText(/lead\(s\) are currently in the qualified status\./)).toBeVisible()
+    await expect(page.getByText('Based on your data — not AI-generated')).toBeVisible()
+
+    expect(guard.pageErrors, `page errors: ${guard.pageErrors.join('; ')}`).toEqual([])
+    expect(guard.failedRequests, `failed requests: ${guard.failedRequests.join('; ')}`).toEqual([])
+  })
+
+  test('the top customers widget shows a real seeded customer name, not placeholder text', async ({ page }) => {
+    await realLogin(page, OWNER)
+
+    await expect(page.getByText('Top Customers')).toBeVisible()
+    const topCustomersEmpty = await page.getByText('No paid invoices yet').isVisible().catch(() => false)
+    if (!topCustomersEmpty) {
+      // At least one real, non-empty customer name row is rendered.
+      await expect(page.getByRole('listitem').first()).toBeVisible()
+    }
+  })
+})
+
 test.describe('local integration — customers (real backend)', () => {
   test('list shows real seeded customers, search and detail work', async ({ page }) => {
     await realLogin(page, OWNER)

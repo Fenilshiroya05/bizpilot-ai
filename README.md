@@ -4,7 +4,7 @@ BizPilot AI is an AI-powered business operations platform for small and medium b
 
 This is being built as a production-grade, multi-tenant SaaS application — not a prototype.
 
-> **Status:** Phases 1–19 (backend) complete, production-audited, and tested. Phase 20 (frontend foundation) complete. See [docs/roadmap.md](docs/roadmap.md) for the full build plan and current progress.
+> **Status:** Phases 1–19 (backend) complete, production-audited, and tested. Phase 20 (frontend foundation) complete. Phase 26 (dashboard analytics — charts, top customers, deterministic Business Insights) complete. See [docs/roadmap.md](docs/roadmap.md) for the full build plan and current progress.
 
 ---
 
@@ -491,6 +491,25 @@ curl -s http://localhost:8080/api/v1/analytics/summary \
 - **No charts, no date ranges, no dashboard UI** — this phase is the summary-card numbers only; revenue trend/lead funnel/lead sources/pipeline/top-customers endpoints and the frontend dashboard itself (Phase 26) are separate, later phases.
 - See [docs/architecture.md](docs/architecture.md) §1r and [docs/security.md](docs/security.md) §2j/§3q for the full account.
 
+### Dashboard Analytics (Phase 26)
+
+Phase 26 adds the five chart/widget aggregate endpoints the Phase 19 summary never covered, plus the frontend dashboard's charts, top-customers widget, and a deterministic "Business Insights" panel.
+
+```bash
+# All five require ANALYTICS_READ (seeded for every role), same as /summary.
+curl -s http://localhost:8080/api/v1/analytics/revenue-trend -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:8080/api/v1/analytics/lead-funnel -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:8080/api/v1/analytics/lead-sources -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:8080/api/v1/analytics/sales-pipeline -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:8080/api/v1/analytics/top-customers -H "Authorization: Bearer $TOKEN"
+```
+
+- **Revenue trend** — 30 daily points, every day present even at zero revenue, each the sum of `PAID` invoice totals created that day.
+- **Lead funnel** — the real current `LeadStatus` distribution across all 7 statuses; **lead sources** — grouped lead count per `LeadSource`, only sources with at least one lead. **Sales pipeline** — grouped quotation count/`grandTotal` per `QuotationStatus` (the real lifecycle status is the pipeline "stage" model in this domain — no invented stage concept). **Top customers** — the top 5 customers by all-time `PAID`-invoice revenue.
+- **"Business Insights" is deterministic, not AI-generated** — every sentence is a plain-JavaScript read of an already-fetched, real metric; no LLM/Ollama/OpenAI/AI Assistant call is made anywhere in the panel, and a sentence only appears when its underlying data actually exists.
+- The frontend dashboard's Phase 20 KPI row is unchanged; the new charts/widgets render below it, each fully self-contained (its own query, its own loading/error/empty state). `recharts` is the one new dependency this phase adds.
+- See [docs/roadmap.md](docs/roadmap.md#phase-26--completed-scope) for the full account.
+
 ## Running the Frontend
 
 Phase 20 scaffolds the frontend foundation: React + TypeScript + Vite, Tailwind CSS, the design system, the application shell (sidebar/top bar/mobile drawer), authentication, RBAC-aware navigation, and the dashboard KPI cards (`GET /api/v1/analytics/summary`). Phase 21 adds real Customers (`/customers`) and Leads (`/leads`) — list/search/filter/pagination, create/edit/archive, notes/history, self-assign/unassign, and an AI Lead Scoring panel on the Lead detail page (advisory only — see [docs/roadmap.md](docs/roadmap.md#phase-21--completed-scope) for the full account, including the locked "no teammate picker" decision: the backend has no user-directory endpoint, so lead assignment only ever acts on the current user's own id). Every remaining module (Products, Quotations, Invoices, Tasks, Documents, full AI Assistant) is still an honest "coming in a later phase" placeholder behind its real nav link — see [docs/roadmap.md](docs/roadmap.md) for the exact frontend phase plan.
@@ -518,7 +537,7 @@ npm run test:e2e:headed   # watch it run in a real browser window
 npm run test:e2e:report   # open the last HTML report
 ```
 
-`npm run test:e2e` starts the Vite dev server itself (Playwright's `webServer` config), waits until it's reachable, launches Chromium, runs the smoke suite (`frontend/e2e/`), captures screenshots at the required breakpoints into `test-results/screenshots/` (gitignored), generates an HTML report (`playwright-report/`, gitignored), and shuts the dev server down automatically — no manual browser or backend setup needed. Every test mocks the backend entirely at the browser network layer (`page.route`, see `e2e/mocks.ts`) with realistic fixtures for all seven analytics metrics; a real backend is never required for this suite, and no production/API code is touched by the mocks. This is a lightweight foundation-verification layer (auth, dashboard, navigation, responsive, basic accessibility) — the full Phase 26 E2E strategy (complete Customer/Lead/Quotation/Invoice/Document/AI flows, a role matrix, performance, visual regression) is a separate, later scope.
+`npm run test:e2e` starts the Vite dev server itself (Playwright's `webServer` config), waits until it's reachable, launches Chromium, runs the smoke suite (`frontend/e2e/`), captures screenshots at the required breakpoints into `test-results/screenshots/` (gitignored), generates an HTML report (`playwright-report/`, gitignored), and shuts the dev server down automatically — no manual browser or backend setup needed. Every test mocks the backend entirely at the browser network layer (`page.route`, see `e2e/mocks.ts`) with realistic fixtures for all seven analytics metrics; a real backend is never required for this suite, and no production/API code is touched by the mocks. This suite now covers every implemented module's real flows (Customers/Leads/Products/Quotations/Tasks/Documents/AI Assistant/AI Lead Scoring/Dashboard), an RBAC role matrix, and responsive screenshots at every required breakpoint — a dedicated performance-testing program and a visual-regression framework are separate, later scope (CLAUDE.md §45 Phase 27, "Testing"; this paragraph previously mislabeled that broader effort as "Phase 26").
 
 **`e2e/local-integration.spec.ts`** (Phase 22.5) is the one exception: it mocks nothing at all and exercises the real stack (real Chromium → real Vite dev server → real Spring Boot → real PostgreSQL) against the [Local Demo Data](#local-demo-data-phase-225) seeded above. It is excluded from the default `npm run test:e2e` (via `testIgnore` in `playwright.config.ts`) so a routine/CI run never depends on an unavailable local database — run it explicitly, once PostgreSQL, the backend (with demo users seeded), and the frontend are all already running and pointed at each other:
 

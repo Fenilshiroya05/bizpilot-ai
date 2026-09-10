@@ -93,6 +93,41 @@ export interface AnalyticsSummaryResponse {
   pendingFollowUps: number
 }
 
+// ---- analytics/dto/RevenueTrendPointResponse.java ----
+// `period` is a LocalDate, serialized by Jackson as an ISO-8601 date string
+// (e.g. "2026-08-15") — never parsed/recomputed client-side, only formatted
+// for the chart's X axis.
+export interface RevenueTrendPointResponse {
+  period: string
+  revenue: number
+}
+
+// ---- analytics/dto/LeadFunnelStageResponse.java ----
+export interface LeadFunnelStageResponse {
+  status: LeadStatus
+  count: number
+}
+
+// ---- analytics/dto/LeadSourceBreakdownResponse.java ----
+export interface LeadSourceBreakdownResponse {
+  source: LeadSource
+  count: number
+}
+
+// ---- analytics/dto/SalesPipelineStageResponse.java ----
+export interface SalesPipelineStageResponse {
+  status: QuotationStatus
+  count: number
+  amount: number
+}
+
+// ---- analytics/dto/TopCustomerResponse.java ----
+export interface TopCustomerResponse {
+  customerId: string
+  customerName: string
+  revenue: number
+}
+
 // ---- crm/entity/CustomerStatus.java ----
 export type CustomerStatus = 'ACTIVE' | 'INACTIVE' | 'ARCHIVED'
 

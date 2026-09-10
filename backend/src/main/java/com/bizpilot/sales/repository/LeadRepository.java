@@ -12,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -110,4 +111,19 @@ public interface LeadRepository extends JpaRepository<Lead, UUID> {
             """)
     long countPendingFollowUpsExcludingArchived(@Param("organizationId") UUID organizationId,
                                                  @Param("onOrBefore") LocalDate onOrBefore);
+
+    /**
+     * Phase 26 (CLAUDE.md §22 "lead sources" chart): grouped lead count per
+     * {@code source} — same "no archived filter" convention as {@link
+     * #countByStatus} (a source distribution reflects every current lead,
+     * archived or not). Only sources with at least one matching lead appear
+     * in the result; no zero-count rows are synthesized.
+     */
+    @Query("""
+            SELECT l.source AS source, COUNT(l) AS count
+            FROM Lead l
+            WHERE l.organization.id = :organizationId
+            GROUP BY l.source
+            """)
+    List<LeadSourceCount> countGroupedBySource(@Param("organizationId") UUID organizationId);
 }

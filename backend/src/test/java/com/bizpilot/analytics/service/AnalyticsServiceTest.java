@@ -1,12 +1,24 @@
 package com.bizpilot.analytics.service;
 
 import com.bizpilot.analytics.dto.AnalyticsSummaryResponse;
+import com.bizpilot.analytics.dto.LeadFunnelStageResponse;
+import com.bizpilot.analytics.dto.LeadSourceBreakdownResponse;
+import com.bizpilot.analytics.dto.RevenueTrendPointResponse;
+import com.bizpilot.analytics.dto.SalesPipelineStageResponse;
+import com.bizpilot.analytics.dto.TopCustomerResponse;
 import com.bizpilot.crm.repository.CustomerRepository;
 import com.bizpilot.organization.TenantContext;
 import com.bizpilot.sales.entity.InvoiceStatus;
+import com.bizpilot.sales.entity.LeadSource;
 import com.bizpilot.sales.entity.LeadStatus;
+import com.bizpilot.sales.entity.QuotationStatus;
+import com.bizpilot.sales.repository.CustomerRevenueRow;
 import com.bizpilot.sales.repository.InvoiceRepository;
+import com.bizpilot.sales.repository.InvoiceRevenuePoint;
 import com.bizpilot.sales.repository.LeadRepository;
+import com.bizpilot.sales.repository.LeadSourceCount;
+import com.bizpilot.sales.repository.QuotationPipelineRow;
+import com.bizpilot.sales.repository.QuotationRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -24,6 +36,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -46,10 +60,44 @@ class AnalyticsServiceTest {
     private InvoiceRepository invoiceRepository;
 
     @Mock
+    private QuotationRepository quotationRepository;
+
+    @Mock
     private TenantContext tenantContext;
 
     private AnalyticsService service() {
-        return new AnalyticsService(customerRepository, leadRepository, invoiceRepository, tenantContext);
+        return new AnalyticsService(customerRepository, leadRepository, invoiceRepository, quotationRepository,
+                tenantContext);
+    }
+
+    private static LeadSourceCount leadSourceCount(LeadSource source, long count) {
+        LeadSourceCount row = mock(LeadSourceCount.class);
+        when(row.getSource()).thenReturn(source);
+        when(row.getCount()).thenReturn(count);
+        return row;
+    }
+
+    private static QuotationPipelineRow pipelineRow(QuotationStatus status, long count, BigDecimal amount) {
+        QuotationPipelineRow row = mock(QuotationPipelineRow.class);
+        when(row.getStatus()).thenReturn(status);
+        when(row.getCount()).thenReturn(count);
+        when(row.getAmount()).thenReturn(amount);
+        return row;
+    }
+
+    private static CustomerRevenueRow customerRevenueRow(UUID customerId, String name, BigDecimal revenue) {
+        CustomerRevenueRow row = mock(CustomerRevenueRow.class);
+        when(row.getCustomerId()).thenReturn(customerId);
+        when(row.getCustomerName()).thenReturn(name);
+        when(row.getRevenue()).thenReturn(revenue);
+        return row;
+    }
+
+    private static InvoiceRevenuePoint revenuePoint(Instant createdAt, BigDecimal total) {
+        InvoiceRevenuePoint point = mock(InvoiceRevenuePoint.class);
+        when(point.getCreatedAt()).thenReturn(createdAt);
+        when(point.getTotal()).thenReturn(total);
+        return point;
     }
 
     private void stubOrganization(UUID organizationId) {
@@ -238,5 +286,116 @@ class AnalyticsServiceTest {
         AnalyticsSummaryResponse response = service().getSummary();
 
         assertThat(response.conversionRate()).isEqualByComparingTo("28.57");
+    }
+
+    // ---- Phase 26 chart/widget aggregates --------------------------------------------------
+
+    @Test
+    void revenueTrendReturnsExactlyThirtyDaysEndingTodayEvenWithNoInvoices() {
+        stubOrganization(UUID.randomUUID());
+        when(invoiceRepository.findPaidRevenuePointsCreatedOnOrAfter(any(), any())).thenReturn(List.of());
+
+        List<RevenueTrendPointResponse> trend = service().getRevenueTrend();
+
+        assertThat(trend).hasSize(30);
+        assertThat(trend.get(0).period()).isEqualTo(LocalDate.now().minusDays(29));
+        assertThat(trend.get(29).period()).isEqualTo(LocalDate.now());
+        assertThat(trend).allSatisfy(point -> assertThat(point.revenue()).isEqualByComparingTo("0.0000"));
+    }
+
+    @Test
+    void revenueTrendSumsMultipleInvoicesOnTheSameDayIntoOnePoint() {
+        stubOrganization(UUID.randomUUID());
+        Instant today = Instant.now();
+        List<InvoiceRevenuePoint> points = List.of(
+                revenuePoint(today, new BigDecimal("100.0000")),
+                revenuePoint(today, new BigDecimal("50.0000")));
+        when(invoiceRepository.findPaidRevenuePointsCreatedOnOrAfter(any(), any())).thenReturn(points);
+
+        List<RevenueTrendPointResponse> trend = service().getRevenueTrend();
+
+        RevenueTrendPointResponse todayPoint = trend.get(trend.size() - 1);
+        assertThat(todayPoint.period()).isEqualTo(LocalDate.now());
+        assertThat(todayPoint.revenue()).isEqualByComparingTo("150.0000");
+    }
+
+    @Test
+    void leadFunnelQueriesEveryLeadStatusExactlyOnceAndMapsInEnumOrder() {
+        stubOrganization(UUID.randomUUID());
+        when(leadRepository.countByStatus(any(), any())).thenReturn(0L);
+        when(leadRepository.countByStatus(any(), eq(LeadStatus.NEW))).thenReturn(5L);
+        when(leadRepository.countByStatus(any(), eq(LeadStatus.WON))).thenReturn(2L);
+
+        List<LeadFunnelStageResponse> funnel = service().getLeadFunnel();
+
+        assertThat(funnel).hasSize(LeadStatus.values().length);
+        assertThat(funnel).extracting(LeadFunnelStageResponse::status)
+                .containsExactly(LeadStatus.values());
+        assertThat(funnel.get(0).count()).isEqualTo(5L);
+        verify(leadRepository, times(LeadStatus.values().length)).countByStatus(any(), any());
+    }
+
+    @Test
+    void leadSourcesMapsEachGroupedRowDirectly() {
+        stubOrganization(UUID.randomUUID());
+        List<LeadSourceCount> rows = List.of(
+                leadSourceCount(LeadSource.WEBSITE, 4L),
+                leadSourceCount(LeadSource.REFERRAL, 1L));
+        when(leadRepository.countGroupedBySource(any())).thenReturn(rows);
+
+        List<LeadSourceBreakdownResponse> sources = service().getLeadSources();
+
+        assertThat(sources).containsExactly(
+                new LeadSourceBreakdownResponse(LeadSource.WEBSITE, 4L),
+                new LeadSourceBreakdownResponse(LeadSource.REFERRAL, 1L));
+    }
+
+    @Test
+    void leadSourcesReturnsAnEmptyListWithNoSyntheticZeroRows() {
+        stubOrganization(UUID.randomUUID());
+        when(leadRepository.countGroupedBySource(any())).thenReturn(List.of());
+
+        assertThat(service().getLeadSources()).isEmpty();
+    }
+
+    @Test
+    void salesPipelineMapsEachGroupedRowDirectlyWithoutNullHandling() {
+        stubOrganization(UUID.randomUUID());
+        List<QuotationPipelineRow> rows = List.of(
+                pipelineRow(QuotationStatus.DRAFT, 2L, new BigDecimal("500.0000")),
+                pipelineRow(QuotationStatus.ACCEPTED, 1L, new BigDecimal("1200.0000")));
+        when(quotationRepository.countAndSumGroupedByStatus(any())).thenReturn(rows);
+
+        List<SalesPipelineStageResponse> pipeline = service().getSalesPipeline();
+
+        assertThat(pipeline).containsExactly(
+                new SalesPipelineStageResponse(QuotationStatus.DRAFT, 2L, new BigDecimal("500.0000")),
+                new SalesPipelineStageResponse(QuotationStatus.ACCEPTED, 1L, new BigDecimal("1200.0000")));
+    }
+
+    @Test
+    void topCustomersRequestsExactlyTheLockedTopNAsAnUnsortedPageable() {
+        stubOrganization(UUID.randomUUID());
+        when(invoiceRepository.findTopCustomersByRevenue(any(), any())).thenReturn(List.of());
+        org.springframework.data.domain.Pageable expected =
+                org.springframework.data.domain.PageRequest.of(0, 5);
+
+        service().getTopCustomers();
+
+        verify(invoiceRepository).findTopCustomersByRevenue(any(), eq(expected));
+    }
+
+    @Test
+    void topCustomersMapsEachRowDirectlyInDescendingOrder() {
+        stubOrganization(UUID.randomUUID());
+        UUID customerId = UUID.randomUUID();
+        List<CustomerRevenueRow> rows =
+                List.of(customerRevenueRow(customerId, "Top Customer", new BigDecimal("9999.0000")));
+        when(invoiceRepository.findTopCustomersByRevenue(any(), any())).thenReturn(rows);
+
+        List<TopCustomerResponse> topCustomers = service().getTopCustomers();
+
+        assertThat(topCustomers).containsExactly(
+                new TopCustomerResponse(customerId, "Top Customer", new BigDecimal("9999.0000")));
     }
 }

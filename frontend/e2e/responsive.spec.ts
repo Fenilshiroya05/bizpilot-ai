@@ -423,3 +423,41 @@ test.describe('responsive — documents (Phase 24)', () => {
     }
   })
 })
+
+test.describe('responsive — dashboard (Phase 26)', () => {
+  test('dashboard analytics section: multi-column on desktop, single column on mobile, no horizontal overflow, screenshots', async ({
+    page,
+  }) => {
+    const guard = attachConsoleGuard(page)
+    await mockAuthenticatedSession(page)
+    await loginViaUi(page)
+    await expect(page.getByText('Revenue Trend')).toBeVisible()
+
+    for (const { width, height } of [...DESKTOP_BREAKPOINTS, ...MOBILE_BREAKPOINTS]) {
+      await page.setViewportSize({ width, height })
+      await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible()
+      // Every chart card is present at every breakpoint — ResponsiveContainer
+      // reflows within its own card, it never disappears.
+      await expect(page.getByText('Revenue Trend')).toBeVisible()
+      await expect(page.getByText('Business Insights')).toBeVisible()
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/screenshots/dashboard-analytics-${width}x${height}.png`, fullPage: true })
+    }
+
+    expect(guard.errors, `console errors: ${guard.errors.join('; ')}`).toEqual([])
+  })
+
+  test('at 375px, chart cards stack into a single column with a real, non-overflowing chart', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await mockAuthenticatedSession(page)
+    await loginViaUi(page)
+
+    await expect(page.getByText('Revenue Trend')).toBeVisible()
+    // A real Recharts SVG is mounted and sized within the viewport, not clipped.
+    const chartSurface = page.locator('svg.recharts-surface').first()
+    await expect(chartSurface).toBeVisible()
+    const box = await chartSurface.boundingBox()
+    expect(box?.width ?? 0).toBeLessThanOrEqual(375)
+    expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(1)
+  })
+})

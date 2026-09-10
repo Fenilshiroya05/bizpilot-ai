@@ -51,6 +51,84 @@ export const TEST_ANALYTICS_ZERO = {
   pendingFollowUps: 0,
 }
 
+// ---------------------------------------------------------------------------
+// Phase 26 — Dashboard analytics (charts/insights) fixtures
+// ---------------------------------------------------------------------------
+
+export const TEST_REVENUE_TREND = [
+  { period: '2026-08-01', revenue: 1000 },
+  { period: '2026-08-15', revenue: 2500 },
+  { period: '2026-08-30', revenue: 1800 },
+]
+
+export const TEST_REVENUE_TREND_ZERO = [
+  { period: '2026-08-01', revenue: 0 },
+  { period: '2026-08-30', revenue: 0 },
+]
+
+export const TEST_LEAD_FUNNEL = [
+  { status: 'NEW', count: 5 },
+  { status: 'CONTACTED', count: 3 },
+  { status: 'QUALIFIED', count: 2 },
+  { status: 'PROPOSAL', count: 1 },
+  { status: 'NEGOTIATION', count: 1 },
+  { status: 'WON', count: 2 },
+  { status: 'LOST', count: 1 },
+]
+
+export const TEST_LEAD_SOURCES = [
+  { source: 'WEBSITE', count: 6 },
+  { source: 'REFERRAL', count: 3 },
+]
+
+export const TEST_SALES_PIPELINE = [
+  { status: 'DRAFT', count: 2, amount: 5000 },
+  { status: 'ACCEPTED', count: 1, amount: 8000 },
+]
+
+export const TEST_TOP_CUSTOMERS = [
+  { customerId: 'e2e-topcust-1', customerName: 'Acme Retail Pvt Ltd', revenue: 8000 },
+  { customerId: 'e2e-topcust-2', customerName: 'Bright Traders', revenue: 5000 },
+]
+
+function mockJsonEndpoint(path: string, defaultBody: unknown) {
+  return async (page: Page, body: unknown = defaultBody, options: { status?: number; delayMs?: number } = {}) => {
+    await page.route(`**${path}`, async (route) => {
+      if (options.delayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.delayMs))
+      }
+      if (options.status && options.status >= 400) {
+        return json(route, options.status, apiError(options.status, 'INTERNAL_ERROR', 'An unexpected error occurred', path))
+      }
+      return json(route, 200, body)
+    })
+  }
+}
+
+export const mockRevenueTrend = mockJsonEndpoint('/api/v1/analytics/revenue-trend', TEST_REVENUE_TREND)
+export const mockLeadFunnel = mockJsonEndpoint('/api/v1/analytics/lead-funnel', TEST_LEAD_FUNNEL)
+export const mockLeadSources = mockJsonEndpoint('/api/v1/analytics/lead-sources', TEST_LEAD_SOURCES)
+export const mockSalesPipeline = mockJsonEndpoint('/api/v1/analytics/sales-pipeline', TEST_SALES_PIPELINE)
+export const mockTopCustomers = mockJsonEndpoint('/api/v1/analytics/top-customers', TEST_TOP_CUSTOMERS)
+
+/** All five Phase 26 chart/widget endpoints at once, with realistic non-empty defaults. */
+export async function mockDashboardAnalytics(page: Page) {
+  await mockRevenueTrend(page)
+  await mockLeadFunnel(page)
+  await mockLeadSources(page)
+  await mockSalesPipeline(page)
+  await mockTopCustomers(page)
+}
+
+/** Same five endpoints, all returning zero/empty data (for the dashboard's empty-state tests). */
+export async function mockDashboardAnalyticsEmpty(page: Page) {
+  await mockRevenueTrend(page, TEST_REVENUE_TREND_ZERO)
+  await mockLeadFunnel(page, [])
+  await mockLeadSources(page, [])
+  await mockSalesPipeline(page, [])
+  await mockTopCustomers(page, [])
+}
+
 function json(route: Route, status: number, body: unknown) {
   return route.fulfill({
     status,
@@ -104,11 +182,18 @@ export async function mockAnalytics(
   })
 }
 
-/** Full mock set for a successful, authenticated session landing on the dashboard. */
+/**
+ * Full mock set for a successful, authenticated session landing on the
+ * dashboard. Also wires the five Phase 26 chart/widget endpoints (with
+ * realistic non-empty defaults) so every existing spec that already calls
+ * this helper keeps working without needing its own changes — dashboard
+ * child widgets that would otherwise hit an unmocked real network request.
+ */
 export async function mockAuthenticatedSession(page: Page, analytics: unknown = TEST_ANALYTICS) {
   await mockLoginSuccess(page)
   await mockSession(page)
   await mockAnalytics(page, analytics)
+  await mockDashboardAnalytics(page)
   await mockLogoutSuccess(page)
 }
 
@@ -117,6 +202,7 @@ export async function mockAuthenticatedSessionAs(page: Page, roles: string[], an
   await mockLoginSuccess(page)
   await mockSessionAs(page, roles)
   await mockAnalytics(page, analytics)
+  await mockDashboardAnalytics(page)
   await mockLogoutSuccess(page)
 }
 

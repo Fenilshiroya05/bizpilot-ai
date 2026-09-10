@@ -31,7 +31,7 @@ Status legend: `[x]` complete · `[ ]` not started.
 | 23 | Sales UI | [ ] |
 | 24 | Document UI | [ ] |
 | 25 | AI assistant UI | [ ] |
-| 26 | Dashboard | [ ] |
+| 26 | Dashboard | [x] |
 | 27 | Testing | [ ] |
 | 28 | Docker | [ ] |
 | 29 | CI/CD | [ ] |
@@ -361,6 +361,23 @@ No Customers/Leads/Products/Quotations/Invoices/Tasks/Documents features, workin
 - **A second, independent class of bug this pass caught**: several early test drafts used `page.goto('/customers')` for in-app navigation after login, which — because tokens are memory-only by Phase 20's own locked decision — triggers a full reload and silently loses the session, bouncing back to `/auth/login`. Fixed by adding `goToCustomers`/`goToLeads` helpers that navigate via the real sidebar link (SPA client-side routing) instead; this also became a useful, accurate reminder of the real consequence of the memory-only-token decision.
 - **A third bug class**: several `page.route` patterns for `/{id}/history` and `/{id}/notes` had no trailing wildcard, so they failed to match the real request URLs once the `?page=&size=` query string was appended — those requests fell through to the real network (connection refused) instead of the mock, surfacing as a genuine `NetworkError` in the UI. Fixed by adding a trailing `*` to those glob patterns.
 - No backend/database/migration/API-contract/authentication/RBAC changes.
+
+## Phase 26 — Completed Scope
+
+- **Five new read-only analytics aggregate endpoints** added to the existing `analytics` module (`AnalyticsController`/`AnalyticsService`), each gated by the same `ANALYTICS_READ` permission as `/summary`, each resolving the organization from `TenantContext` only — never a client-supplied id, and no new migration was needed (`ANALYTICS_READ` was already seeded for all five roles by V13):
+  - `GET /api/v1/analytics/revenue-trend` — 30 daily points (every day present, even at zero, for a continuous chart X-axis), each the sum of `PAID` invoice totals created that day.
+  - `GET /api/v1/analytics/lead-funnel` — the real current `LeadStatus` distribution across all 7 statuses (reuses `LeadRepository.countByStatus`, the same query `/summary` already calls 3 times — no new repository method needed for this one).
+  - `GET /api/v1/analytics/lead-sources` — grouped lead count per `LeadSource`; only sources with at least one lead appear (no synthetic zero rows).
+  - `GET /api/v1/analytics/sales-pipeline` — grouped quotation count and `grandTotal` sum per `QuotationStatus` — the real quotation lifecycle status is the pipeline "stage" model in this domain; no separate stage concept was invented.
+  - `GET /api/v1/analytics/top-customers` — the top 5 customers by all-time `PAID`-invoice revenue (a lifetime-value ranking, a distinct definition from `/summary`'s 30-day window), via a bounded, unsorted `Pageable` request — never a client-controlled page size.
+- **New Spring Data JPA interface projections** (`sales.repository.{LeadSourceCount,QuotationPipelineRow,InvoiceRevenuePoint,CustomerRevenueRow}`) for the grouped/aggregate queries above — no native SQL anywhere, consistent with every other query in this codebase.
+- **Frontend**: `recharts` added (the one new dependency this phase introduces — no other new library). `DashboardPage` gains a new analytics section *below* the untouched Phase 20 KPI row: `RevenueTrendChart`, `LeadFunnelChart`, `LeadSourcesChart`, `SalesPipelineChart` (all Recharts `BarChart`/`LineChart`, one restrained primary-blue color, no rainbow palettes), `TopCustomersCard` (a compact ranked list), and `AiInsightsPanel`. Each of the six is fully self-contained — its own React Query hook, its own loading/error/retry/empty state.
+- **"Business Insights" panel is deterministic, not AI-generated** — every sentence is a direct, plain-JavaScript read of an already-fetched, already-real metric (revenue, qualified leads, outstanding invoices, pending follow-ups, largest lead source, largest pipeline stage by value, top customer) with no LLM/Ollama/OpenAI/AI Assistant call anywhere in the panel; a sentence is included only when its underlying data actually exists (e.g. no "largest lead source" sentence for a tenant with zero leads). Labeled "Business Insights · Based on your data — not AI-generated" to avoid any implication of LLM generation.
+- **Pre-existing router permission gap closed**: `/dashboard` is now wrapped in the same `RequirePermission permission="ANALYTICS_READ"` pattern every other route already uses (previously the only route missing it) — no behavior change for any of the five roles, since all five already have `ANALYTICS_READ`.
+- **No changes to any other module** — Customers/Leads/Products/Quotations/Invoices/Tasks/Documents/AI Assistant/local RAG/embeddings/PGVector/AI provider config are all untouched; the KPI row's own cards, values, and tests are unchanged.
+- Mandatory tests: 46 new/updated backend tests (`AnalyticsServiceTest`, `AnalyticsIntegrationTests` against real Testcontainers Postgres, `AnalyticsAuthorizationTests` for all five roles on all five new endpoints, `AnalyticsTenantIsolationTests` with exact cross-org value assertions) — full backend suite 699 passing, 0 failures. Frontend: new Vitest/RTL tests for all six widgets (loading/error/empty/populated) plus updated `DashboardPage.test.tsx`; full suite 264 passing. `tsc -b`, `eslint .` (0 errors), and `vite build` all pass.
+- **Real Chromium (Playwright) browser verification performed**, not merely claimed: `dashboard.spec.ts` rewritten (the Phase 20 negative assertions proving charts/insights didn't exist are replaced with Phase 26 positive ones; the KPI-row tests themselves are unchanged); a new `responsive — dashboard (Phase 26)` block added to `responsive.spec.ts` covering all six required breakpoints (1440/1280/1024/768/390/375) with screenshots and horizontal-overflow checks; a new real-backend block added to `local-integration.spec.ts` proving every widget binds to real seeded data (not a mock). Mocked suite: 176/176 passing (Chromium). Local-integration suite (real backend): 23/23 passing.
+- No cross-module E2E hardening, performance-testing program, or visual-regression framework was added — that broader effort was previously (mis)referenced as "Phase 26" in the README's Playwright section; it actually belongs to the later, separately-scoped Testing phase (CLAUDE.md §45 Phase 27).
 
 ## Process Per Phase
 

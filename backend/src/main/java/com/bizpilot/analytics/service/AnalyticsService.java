@@ -1,13 +1,21 @@
 package com.bizpilot.analytics.service;
 
 import com.bizpilot.analytics.dto.AnalyticsSummaryResponse;
+import com.bizpilot.analytics.dto.LeadFunnelStageResponse;
+import com.bizpilot.analytics.dto.LeadSourceBreakdownResponse;
+import com.bizpilot.analytics.dto.RevenueTrendPointResponse;
+import com.bizpilot.analytics.dto.SalesPipelineStageResponse;
+import com.bizpilot.analytics.dto.TopCustomerResponse;
 import com.bizpilot.crm.repository.CustomerRepository;
 import com.bizpilot.organization.TenantContext;
 import com.bizpilot.sales.entity.InvoiceStatus;
 import com.bizpilot.sales.entity.LeadStatus;
 import com.bizpilot.sales.repository.InvoiceRepository;
+import com.bizpilot.sales.repository.InvoiceRevenuePoint;
 import com.bizpilot.sales.repository.LeadRepository;
+import com.bizpilot.sales.repository.QuotationRepository;
 import com.bizpilot.sales.service.InvoiceCalculator;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,8 +23,12 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.UUID;
 
 /**
@@ -47,10 +59,12 @@ import java.util.UUID;
  * {@code delete}/{@code deleteBy...} method, and the whole computation runs
  * inside a single {@code readOnly} transaction.
  *
- * <p><b>No AI.</b> Every value is computed deterministically via SQL
- * aggregation — no {@code AiChatService}, no prompt, no model call of any
- * kind (CLAUDE.md's own "AI Business Insights" layer is explicitly deferred
- * to a later phase, not built here).
+ * <p><b>No AI.</b> Every value here — including the Phase 26 chart/widget
+ * aggregates below — is computed deterministically via SQL aggregation: no
+ * {@code AiChatService}, no prompt, no model call of any kind, anywhere in
+ * this class. CLAUDE.md's "AI Business Insights" panel is built entirely in
+ * the frontend as data-grounded sentences generated from these same
+ * deterministic responses — it never calls an LLM either.
  */
 @Service
 public class AnalyticsService {
@@ -58,7 +72,8 @@ public class AnalyticsService {
     /**
      * Locked (project instructions §17/§20): fixed at 30 days, never a
      * client-supplied period — no {@code ?since=}/{@code ?days=} parameter
-     * exists on the summary endpoint.
+     * exists on the summary endpoint. Reused as-is for the Phase 26 revenue
+     * trend window.
      */
     private static final int RECENT_WINDOW_DAYS = 30;
 
@@ -72,16 +87,25 @@ public class AnalyticsService {
 
     private static final BigDecimal ONE_HUNDRED = BigDecimal.valueOf(100);
 
+    /**
+     * Phase 26 (CLAUDE.md §22 "top customers" widget): a bounded top-N,
+     * never the full customer list — small enough for a dashboard card.
+     */
+    private static final int TOP_CUSTOMERS_LIMIT = 5;
+
     private final CustomerRepository customerRepository;
     private final LeadRepository leadRepository;
     private final InvoiceRepository invoiceRepository;
+    private final QuotationRepository quotationRepository;
     private final TenantContext tenantContext;
 
     public AnalyticsService(CustomerRepository customerRepository, LeadRepository leadRepository,
-                             InvoiceRepository invoiceRepository, TenantContext tenantContext) {
+                             InvoiceRepository invoiceRepository, QuotationRepository quotationRepository,
+                             TenantContext tenantContext) {
         this.customerRepository = customerRepository;
         this.leadRepository = leadRepository;
         this.invoiceRepository = invoiceRepository;
+        this.quotationRepository = quotationRepository;
         this.tenantContext = tenantContext;
     }
 
@@ -112,6 +136,95 @@ public class AnalyticsService {
 
         return new AnalyticsSummaryResponse(totalCustomers, newLeads, qualifiedLeads, conversionRate, revenue,
                 outstandingInvoicesCount, outstandingInvoicesTotal, pendingFollowUps);
+    }
+
+    /**
+     * Phase 26 (CLAUDE.md §22 "revenue trend" chart): one point per calendar
+     * day in the {@link #RECENT_WINDOW_DAYS}-day window, every day present
+     * even with zero revenue (so the chart's X axis is continuous), each
+     * day's value the sum of {@code total} for PAID invoices created that
+     * day — the same "revenue" definition as {@link #getSummary}. Bucketing
+     * happens here, in Java, from the already date-ordered rows returned by
+     * {@link InvoiceRepository#findPaidRevenuePointsCreatedOnOrAfter} —
+     * never a database-specific date-truncation function.
+     */
+    @Transactional(readOnly = true)
+    public List<RevenueTrendPointResponse> getRevenueTrend() {
+        UUID organizationId = tenantContext.currentOrganizationId();
+        Instant since = Instant.now().minus(RECENT_WINDOW_DAYS, ChronoUnit.DAYS);
+        List<InvoiceRevenuePoint> points =
+                invoiceRepository.findPaidRevenuePointsCreatedOnOrAfter(organizationId, since);
+
+        Map<LocalDate, BigDecimal> revenueByDay = new TreeMap<>();
+        LocalDate windowStart = LocalDate.now().minusDays(RECENT_WINDOW_DAYS - 1L);
+        for (long offset = 0; offset < RECENT_WINDOW_DAYS; offset++) {
+            revenueByDay.put(windowStart.plusDays(offset), orZero(null));
+        }
+        for (InvoiceRevenuePoint point : points) {
+            LocalDate day = LocalDate.ofInstant(point.getCreatedAt(), ZoneId.systemDefault());
+            revenueByDay.merge(day, point.getTotal(), BigDecimal::add);
+        }
+
+        return revenueByDay.entrySet().stream()
+                .map(entry -> new RevenueTrendPointResponse(entry.getKey(), entry.getValue()))
+                .toList();
+    }
+
+    /**
+     * Phase 26 (CLAUDE.md §22 "lead funnel" chart): the actual current
+     * {@link LeadStatus} distribution — reuses {@link
+     * LeadRepository#countByStatus} (the same method {@link #getSummary}
+     * already calls three times) for all 7 statuses, so every entry is one
+     * more use of an already-proven query rather than a new aggregate.
+     */
+    @Transactional(readOnly = true)
+    public List<LeadFunnelStageResponse> getLeadFunnel() {
+        UUID organizationId = tenantContext.currentOrganizationId();
+        return Arrays.stream(LeadStatus.values())
+                .map(status -> new LeadFunnelStageResponse(status, leadRepository.countByStatus(organizationId, status)))
+                .toList();
+    }
+
+    /**
+     * Phase 26 (CLAUDE.md §22 "lead sources" chart): grouped lead count per
+     * {@code source}, straight from {@link LeadRepository#countGroupedBySource}.
+     */
+    @Transactional(readOnly = true)
+    public List<LeadSourceBreakdownResponse> getLeadSources() {
+        UUID organizationId = tenantContext.currentOrganizationId();
+        return leadRepository.countGroupedBySource(organizationId).stream()
+                .map(row -> new LeadSourceBreakdownResponse(row.getSource(), row.getCount()))
+                .toList();
+    }
+
+    /**
+     * Phase 26 (CLAUDE.md §22 "sales pipeline" chart): grouped quotation
+     * count/amount per {@code status}, straight from {@link
+     * QuotationRepository#countAndSumGroupedByStatus}. {@code amount} can
+     * never be {@code null} here (unlike {@link #getSummary}'s invoice
+     * sums): every row comes from a {@code GROUP BY} over at least one real
+     * quotation, and {@code grandTotal} itself is never null.
+     */
+    @Transactional(readOnly = true)
+    public List<SalesPipelineStageResponse> getSalesPipeline() {
+        UUID organizationId = tenantContext.currentOrganizationId();
+        return quotationRepository.countAndSumGroupedByStatus(organizationId).stream()
+                .map(row -> new SalesPipelineStageResponse(row.getStatus(), row.getCount(), row.getAmount()))
+                .toList();
+    }
+
+    /**
+     * Phase 26 (CLAUDE.md §22 "top customers" widget): the top {@link
+     * #TOP_CUSTOMERS_LIMIT} customers by all-time PAID-invoice revenue,
+     * straight from {@link InvoiceRepository#findTopCustomersByRevenue}.
+     */
+    @Transactional(readOnly = true)
+    public List<TopCustomerResponse> getTopCustomers() {
+        UUID organizationId = tenantContext.currentOrganizationId();
+        return invoiceRepository.findTopCustomersByRevenue(organizationId, PageRequest.of(0, TOP_CUSTOMERS_LIMIT))
+                .stream()
+                .map(row -> new TopCustomerResponse(row.getCustomerId(), row.getCustomerName(), row.getRevenue()))
+                .toList();
     }
 
     /**

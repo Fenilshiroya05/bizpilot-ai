@@ -4,6 +4,12 @@ import { CalendarClock, Percent, Receipt, Target, TrendingUp, Users } from 'luci
 import { ErrorState } from '@/components/feedback/ErrorState'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { getAnalyticsSummary } from '@/features/dashboard/api'
+import { AiInsightsPanel } from '@/features/dashboard/components/AiInsightsPanel'
+import { LeadFunnelChart } from '@/features/dashboard/components/LeadFunnelChart'
+import { LeadSourcesChart } from '@/features/dashboard/components/LeadSourcesChart'
+import { RevenueTrendChart } from '@/features/dashboard/components/RevenueTrendChart'
+import { SalesPipelineChart } from '@/features/dashboard/components/SalesPipelineChart'
+import { TopCustomersCard } from '@/features/dashboard/components/TopCustomersCard'
 import { KpiCard } from '@/features/dashboard/KpiCard'
 import { formatCount, formatInr, formatPercentage } from '@/lib/money'
 
@@ -73,6 +79,16 @@ export function DashboardPage() {
           />
         </div>
       )}
+
+      {/* Phase 26 — charts/insights, each self-contained (own loading/error/empty state). */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <RevenueTrendChart />
+        <SalesPipelineChart />
+        <LeadFunnelChart />
+        <LeadSourcesChart />
+        <TopCustomersCard />
+        <AiInsightsPanel />
+      </div>
     </div>
   )
 }
