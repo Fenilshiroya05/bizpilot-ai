@@ -8,6 +8,7 @@ import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.Filter;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
@@ -41,6 +42,28 @@ import java.util.UUID;
  * straight to {@link VectorStore#similaritySearch(SearchRequest)} and lets
  * Spring AI's own (still OpenAI-backed, still the same configured
  * EmbeddingModel bean) internal call handle it.
+ *
+ * <p><b>{@link VectorStore} is held via {@link ObjectProvider}</b>
+ * (local-chat-only scope addition) — this class's constructor used to take
+ * {@link VectorStore} as a plain, required argument, which would fail
+ * application startup outright with a {@code BeanCreationException} in an
+ * environment with no vector store configured at all (e.g. local Ollama
+ * chat with {@code AI_VECTORSTORE_TYPE=none}, no embedding model). An
+ * earlier attempt gated this whole bean with {@code @ConditionalOnBean(VectorStore.class)}
+ * instead — that was INCORRECT and has been reverted: Spring Boot evaluates
+ * {@code @ConditionalOnBean} against bean DEFINITIONS already registered at
+ * the time this plain, component-scanned {@code @Service} is processed,
+ * which happens BEFORE {@code PgVectorStoreAutoConfiguration} registers its
+ * own {@code VectorStore} bean definition — so the condition incorrectly
+ * evaluated as "absent" even in a fully, correctly configured environment,
+ * silently breaking retrieval/tenant-isolation everywhere (caught by the
+ * existing test suite, not assumed). Holding {@link VectorStore} via {@link
+ * ObjectProvider} instead sidesteps bean-creation-order entirely: this bean
+ * always exists once {@code bizpilot.ai.enabled=true}, and {@link #search}
+ * resolves the vector store lazily, at call time, returning an empty result
+ * (exactly like a real zero-match search) when none is configured — never a
+ * fabricated/placeholder result, and the fail-closed tenant check below is
+ * completely unaffected by whether a vector store exists.
  */
 @Service
 @ConditionalOnProperty(prefix = "bizpilot.ai", name = "enabled", havingValue = "true")
@@ -48,10 +71,10 @@ public class DefaultDocumentRetrievalService implements DocumentRetrievalService
 
     private static final Logger log = LoggerFactory.getLogger(DefaultDocumentRetrievalService.class);
 
-    private final VectorStore vectorStore;
+    private final ObjectProvider<VectorStore> vectorStore;
     private final TenantContext tenantContext;
 
-    public DefaultDocumentRetrievalService(VectorStore vectorStore, TenantContext tenantContext) {
+    public DefaultDocumentRetrievalService(ObjectProvider<VectorStore> vectorStore, TenantContext tenantContext) {
         this.vectorStore = vectorStore;
         this.tenantContext = tenantContext;
     }
@@ -63,8 +86,17 @@ public class DefaultDocumentRetrievalService implements DocumentRetrievalService
         }
 
         // Fail-closed: propagates IllegalStateException, unmodified, before
-        // any vector operation is attempted — see class Javadoc.
+        // any vector operation is attempted — see class Javadoc. Unconditional,
+        // regardless of whether a vector store is configured.
         UUID organizationId = tenantContext.currentOrganizationId();
+
+        // No vector store configured (local-chat-only scope) — nothing to
+        // search, same as a real zero-match result; never a fabricated one.
+        VectorStore store = vectorStore.getIfAvailable();
+        if (store == null) {
+            log.info("Vector similarity search skipped — no vector store configured [organizationId={}]", organizationId);
+            return List.of();
+        }
 
         FilterExpressionBuilder b = new FilterExpressionBuilder();
         Filter.Expression tenantFilter = b.eq("organizationId", organizationId.toString()).build();
@@ -77,7 +109,7 @@ public class DefaultDocumentRetrievalService implements DocumentRetrievalService
 
         Instant start = Instant.now();
         try {
-            List<org.springframework.ai.document.Document> results = vectorStore.similaritySearch(request);
+            List<org.springframework.ai.document.Document> results = store.similaritySearch(request);
             long durationMs = Duration.between(start, Instant.now()).toMillis();
             log.info("Vector similarity search succeeded [organizationId={}, topK={}, resultCount={}, durationMs={}]",
                     organizationId, topK, results.size(), durationMs);

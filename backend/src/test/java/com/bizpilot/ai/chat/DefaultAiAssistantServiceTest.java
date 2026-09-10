@@ -64,24 +64,61 @@ class DefaultAiAssistantServiceTest {
                 customerTools, leadTools, productTools, invoiceTools);
     }
 
+    /** Chat IS available; only the retrieval collaborator is unavailable (local-chat-only scope). */
+    private DefaultAiAssistantService serviceWithoutRetrieval() {
+        return new DefaultAiAssistantService(
+                objectProviderOf(null), objectProviderOf(aiChatService), contextBuilder, promptService,
+                customerTools, leadTools, productTools, invoiceTools);
+    }
+
     @Test
-    void throwsAiDisabledExceptionWhenTheRetrievalCollaboratorIsUnavailable() {
+    void throwsAiDisabledExceptionWhenTheChatCollaboratorIsUnavailable() {
         assertThatThrownBy(() -> serviceWithAiDisabled().ask("What does the guide say?"))
                 .isInstanceOf(AiDisabledException.class);
 
         verifyNoInteractions(documentRetrievalService, aiChatService);
     }
 
+    /**
+     * Local-chat-only scope: a missing retrieval collaborator (e.g. no
+     * vector store configured, as with local Ollama chat and no embedding
+     * model) must NOT be treated as "AI disabled" — the chat model is still
+     * called directly, with the original user message, no document context.
+     */
     @Test
-    void zeroRetrievedChunksReturnsTheDeterministicAnswerAndNeverCallsTheChatModel() {
+    void retrievalUnavailableStillCallsTheChatModelDirectlyWithTheOriginalMessage() {
+        when(promptService.systemPrompt()).thenReturn("SYSTEM");
+        when(aiChatService.chat(eq("SYSTEM"), eq("What does the guide say?"), anyList()))
+                .thenReturn("A direct answer with no document context.");
+
+        AiChatResponse response = serviceWithoutRetrieval().ask("What does the guide say?");
+
+        assertThat(response.answer()).isEqualTo("A direct answer with no document context.");
+        assertThat(response.sources()).isEmpty();
+        verifyNoInteractions(documentRetrievalService);
+    }
+
+    /**
+     * Local-chat-only scope: zero retrieved chunks (retrieval available but
+     * nothing matched — no documents uploaded, or none relevant) must NOT
+     * return the old canned "not enough information" response — the chat
+     * model is still called directly with the original user message.
+     */
+    @Test
+    void zeroRetrievedChunksStillCallsTheChatModelDirectlyWithTheOriginalMessage() {
         when(documentRetrievalService.search(anyString(), eq(5))).thenReturn(List.of());
+        when(promptService.systemPrompt()).thenReturn("SYSTEM");
+        when(aiChatService.chat(eq("SYSTEM"), eq("What is our refund policy?"), anyList()))
+                .thenReturn("A direct answer with no document context.");
 
         AiChatResponse response = service().ask("What is our refund policy?");
 
-        assertThat(response.answer())
-                .isEqualTo("I couldn't find enough information in your organization's documents to answer that.");
+        assertThat(response.answer()).isEqualTo("A direct answer with no document context.");
         assertThat(response.sources()).isEmpty();
-        verifyNoInteractions(aiChatService);
+        // The exact message asserted above (equal to the original question,
+        // via eq(...) rather than argThat/contains) already proves no
+        // <document_context> was appended when there are zero chunks.
+        verify(aiChatService).chat(eq("SYSTEM"), eq("What is our refund policy?"), anyList());
     }
 
     @Test

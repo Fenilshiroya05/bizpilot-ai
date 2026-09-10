@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.Filter;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -41,6 +42,20 @@ import java.util.UUID;
  * path is reimplemented this way — similarity search and delete (the
  * genuinely hard part: cosine-distance SQL, HNSW index usage) still go
  * entirely through {@link VectorStore}, per project instructions §59.
+ *
+ * <p><b>{@link VectorStore} is held via {@link ObjectProvider}</b>
+ * (local-chat-only scope addition, symmetric with the identical fix on
+ * {@code ai.retrieval.DefaultDocumentRetrievalService}/{@code
+ * ai.service.DefaultAiEmbeddingService}, for the same bean-creation-order
+ * reason documented there — a class-level {@code @ConditionalOnBean} was
+ * tried first and reverted for being unreliable). This bean always exists
+ * once {@code bizpilot.ai.enabled=true}; {@link #store} never needed the
+ * field at all (it writes via plain JDBC), and {@link #deleteForDocument}
+ * resolves it lazily, throwing a clear {@link AiProviderException} only if
+ * an actual delete is attempted with no vector store configured — in
+ * practice unreachable unless a document upload gets past {@code
+ * AiEmbeddingService} in a chat-only environment, which itself already
+ * fails first (see that class).
  */
 @Service
 @ConditionalOnProperty(prefix = "bizpilot.ai", name = "enabled", havingValue = "true")
@@ -61,10 +76,10 @@ public class DefaultDocumentVectorStoreService implements DocumentVectorStoreSer
             """;
 
     private final JdbcTemplate jdbcTemplate;
-    private final VectorStore vectorStore;
+    private final ObjectProvider<VectorStore> vectorStore;
     private final ObjectMapper objectMapper;
 
-    public DefaultDocumentVectorStoreService(JdbcTemplate jdbcTemplate, VectorStore vectorStore,
+    public DefaultDocumentVectorStoreService(JdbcTemplate jdbcTemplate, ObjectProvider<VectorStore> vectorStore,
                                               ObjectMapper objectMapper) {
         this.jdbcTemplate = jdbcTemplate;
         this.vectorStore = vectorStore;
@@ -114,13 +129,17 @@ public class DefaultDocumentVectorStoreService implements DocumentVectorStoreSer
 
     @Override
     public void deleteForDocument(UUID organizationId, UUID documentId) {
+        VectorStore store = vectorStore.getIfAvailable();
+        if (store == null) {
+            throw new AiProviderException("No vector store is configured in this environment", null);
+        }
         try {
             FilterExpressionBuilder b = new FilterExpressionBuilder();
             Filter.Expression tenantAndDocumentFilter = b.and(
                     b.eq("organizationId", organizationId.toString()),
                     b.eq("documentId", documentId.toString())
             ).build();
-            vectorStore.delete(tenantAndDocumentFilter);
+            store.delete(tenantAndDocumentFilter);
             log.info("Vector store delete succeeded [organizationId={}, documentId={}]", organizationId, documentId);
         } catch (RuntimeException e) {
             log.error("Vector store delete failed [organizationId={}, documentId={}, errorType={}]",

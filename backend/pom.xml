@@ -115,15 +115,36 @@
             <version>${pdfbox.version}</version>
         </dependency>
 
-        <!-- Spring AI foundation (CLAUDE.md §5, Phase 14) — OpenAI is the sole
-             configured provider for this phase (its starter is the only one
+        <!-- Spring AI foundation (CLAUDE.md §5, Phase 14) — OpenAI is the
+             configured PRODUCTION provider (its starter is the only one
              providing both ChatModel and EmbeddingModel from one artifact/one
-             API key). No Anthropic/Google/Ollama starter, no PGVector, no
-             vector database client — those are explicitly out of scope here.
+             API key). No Anthropic/Google starter, no vector database client
+             beyond PGVector below — those remain explicitly out of scope.
              Version managed entirely by the spring-ai-bom import above. -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
+
+        <!-- Local-chat-only Ollama support (read-only investigation +
+             locked-scope implementation, see docs/architecture.md/security.md
+             for the full config contract) — a second, independently-selectable
+             chat provider for local development against a developer's own
+             Ollama server, never the default and never used in production.
+             Spring AI's own spring.ai.model.chat selector (application.yml)
+             decides which of this starter's or the OpenAI starter's
+             ChatModel/ChatClient.Builder bean actually activates; no BizPilot
+             Java code branches on provider name. Deliberately NOT adding an
+             embedding model or PGVector configuration for Ollama — local RAG
+             is explicitly out of scope for this change; only
+             DefaultAiChatService's ChatClient.Builder is ever exercised via
+             this starter today. Version managed entirely by the spring-ai-bom
+             import above — verified directly against the cached
+             spring-ai-bom-1.1.8.pom that this exact artifact is managed at
+             1.1.8, not a newer/mismatched version. -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-ollama</artifactId>
         </dependency>
 
         <!-- Phase 15: RAG foundation (CLAUDE.md §17, §6) — Spring AI's PGVector

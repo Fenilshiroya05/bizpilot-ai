@@ -29,6 +29,14 @@ import java.util.List;
  * sits behind works identically whether or not AI is enabled, and enabling
  * AI never requires touching this class.
  *
+ * <p><b>Only {@link AiChatService} is a hard requirement for {@link
+ * #ask(String)}</b> (local-chat-only scope) — {@link DocumentRetrievalService}
+ * is best-effort: when it's unavailable (e.g. no vector store configured,
+ * as in a local Ollama-chat-only environment with no embedding model) the
+ * assistant answers directly, without document context, instead of treating
+ * "no RAG" as equivalent to "AI disabled." This never changes what document
+ * context IS used when retrieval IS available — see below.
+ *
  * <p><b>Never bypasses the Phase 15 retrieval boundary.</b> The only
  * retrieval call is {@code documentRetrievalService.search(message, TOP_K)}
  * — no {@code VectorStore}, no {@code DocumentVectorStoreService}, no raw
@@ -46,9 +54,6 @@ public class DefaultAiAssistantService implements AiAssistantService {
 
     /** Locked (project instructions §4/§20) — never a request parameter. */
     private static final int TOP_K = 5;
-
-    private static final String NO_CONTEXT_ANSWER =
-            "I couldn't find enough information in your organization's documents to answer that.";
 
     private final ObjectProvider<DocumentRetrievalService> documentRetrievalService;
     private final ObjectProvider<AiChatService> aiChatService;
@@ -90,27 +95,30 @@ public class DefaultAiAssistantService implements AiAssistantService {
 
     @Override
     public AiChatResponse ask(String message) {
-        DocumentRetrievalService retrieval = documentRetrievalService.getIfAvailable();
+        // Only the chat collaborator is a hard requirement — checked first,
+        // before any retrieval/provider work — project instructions §27/§55.
         AiChatService chat = aiChatService.getIfAvailable();
-        if (retrieval == null || chat == null) {
-            // Checked first, before any retrieval/provider work — project
-            // instructions §27/§55.
+        if (chat == null) {
             throw new AiDisabledException();
         }
 
         Instant start = Instant.now();
-        // Fails closed here, unmodified: DocumentRetrievalService itself
-        // throws IllegalStateException with no authenticated tenant context,
-        // before touching the vector store — project instructions §16/§17.
-        List<RetrievedChunk> chunks = retrieval.search(message, TOP_K);
+        // Retrieval is best-effort (local-chat-only scope): absent when no
+        // vector store is configured (e.g. local Ollama chat with no
+        // embedding model), in which case this is treated exactly like a
+        // zero-chunk result below — never as "AI disabled." When retrieval
+        // IS available, it still fails closed unmodified: DocumentRetrievalService
+        // itself throws IllegalStateException with no authenticated tenant
+        // context, before touching the vector store — project instructions
+        // §16/§17.
+        DocumentRetrievalService retrieval = documentRetrievalService.getIfAvailable();
+        List<RetrievedChunk> chunks = retrieval != null ? retrieval.search(message, TOP_K) : List.of();
 
-        if (chunks.isEmpty()) {
-            log.info("AI assistant request answered with no retrieved context [resultCount=0]");
-            return new AiChatResponse(NO_CONTEXT_ANSWER, List.of());
-        }
-
-        String context = contextBuilder.build(chunks);
-        String userMessage = message + "\n\n" + context;
+        // No document context to ground the answer in — still answer
+        // directly with the chat model rather than a canned "not enough
+        // information" response, so local/no-document environments (and any
+        // question unrelated to uploaded documents) still get a real answer.
+        String userMessage = chunks.isEmpty() ? message : message + "\n\n" + contextBuilder.build(chunks);
         List<Object> tools = List.of(customerTools, leadTools, productTools, invoiceTools);
         String answer = chat.chat(promptService.systemPrompt(), userMessage, tools);
 

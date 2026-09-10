@@ -82,6 +82,22 @@ spring:
       embedding:
         options:
           model: ${AI_EMBEDDING_MODEL:text-embedding-3-small}
+    # Local-chat-only Ollama support (locked-scope implementation) — a
+    # second, independently-selectable chat provider, activated only when
+    # AI_CHAT_PROVIDER=ollama (spring.ai.model.chat above). Deliberately no
+    # spring.ai.ollama.embedding.* block here: local embeddings/RAG are
+    # explicitly out of scope for this change (AI_EMBEDDING_PROVIDER and
+    # AI_VECTORSTORE_TYPE stay at their existing "none" default, exactly as
+    # they already do for OpenAI-disabled environments today), so only the
+    # chat model is configured. base-url matches Ollama's own documented
+    # default (http://localhost:11434) but is still set explicitly, per this
+    # file's existing "never rely on an implicit default for anything
+    # provider-related" discipline.
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        options:
+          model: ${AI_CHAT_MODEL:qwen3.5:latest}
     vectorstore:
       # Phase 15: same "default to disabled, not the real backend" discipline
       # as spring.ai.model.* above, for the identical reason. Verified

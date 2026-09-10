@@ -4,6 +4,7 @@ import com.bizpilot.ai.config.AiProperties;
 import com.bizpilot.ai.exception.AiProviderException;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.List;
 
@@ -29,7 +30,15 @@ class DefaultAiEmbeddingServiceTest {
     private final AiProperties aiProperties = new AiProperties(true, "openai");
 
     private DefaultAiEmbeddingService service() {
-        return new DefaultAiEmbeddingService(embeddingModel, aiProperties);
+        return new DefaultAiEmbeddingService(objectProviderOf(embeddingModel), aiProperties);
+    }
+
+    /** Local-chat-only scope: the constructor now takes ObjectProvider<EmbeddingModel>, not a plain EmbeddingModel. */
+    private static ObjectProvider<EmbeddingModel> objectProviderOf(EmbeddingModel model) {
+        @SuppressWarnings("unchecked")
+        ObjectProvider<EmbeddingModel> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(model);
+        return provider;
     }
 
     @Test
@@ -115,5 +124,24 @@ class DefaultAiEmbeddingServiceTest {
         assertThatThrownBy(() -> service().embedBatch(List.of("a", "b")))
                 .isInstanceOf(AiProviderException.class)
                 .satisfies(ex -> assertThat(ex.getMessage()).doesNotContain("sk-super-secret-value"));
+    }
+
+    /** Local-chat-only scope: no embedding provider configured — a clear AiProviderException, never an NPE. */
+    @Test
+    void embedThrowsAClearAiProviderExceptionWhenNoEmbeddingModelIsConfigured() {
+        DefaultAiEmbeddingService serviceWithNoEmbeddingModel =
+                new DefaultAiEmbeddingService(objectProviderOf(null), aiProperties);
+
+        assertThatThrownBy(() -> serviceWithNoEmbeddingModel.embed("hello world"))
+                .isInstanceOf(AiProviderException.class);
+    }
+
+    @Test
+    void embedBatchThrowsAClearAiProviderExceptionWhenNoEmbeddingModelIsConfigured() {
+        DefaultAiEmbeddingService serviceWithNoEmbeddingModel =
+                new DefaultAiEmbeddingService(objectProviderOf(null), aiProperties);
+
+        assertThatThrownBy(() -> serviceWithNoEmbeddingModel.embedBatch(List.of("a", "b")))
+                .isInstanceOf(AiProviderException.class);
     }
 }
