@@ -13,7 +13,7 @@ export function TopBar({
   onOpenMobileNav: () => void
   onOpenAi: () => void
 }) {
-  const { organization, isBootstrapping } = useAuth()
+  const { organization, isBootstrapping, permissions } = useAuth()
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-4">
@@ -36,19 +36,21 @@ export function TopBar({
       </div>
 
       <div className="flex items-center gap-1">
-        <Tooltip delayDuration={200}>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={onOpenAi}
-              className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              aria-label="Open AI Assistant"
-            >
-              <Bot className="h-4 w-4" aria-hidden="true" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>AI Assistant</TooltipContent>
-        </Tooltip>
+        {permissions.has('AI_USE') && (
+          <Tooltip delayDuration={200}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onOpenAi}
+                className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                aria-label="Open AI Assistant"
+              >
+                <Bot className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>AI Assistant</TooltipContent>
+          </Tooltip>
+        )}
         <NotificationButton />
         <UserMenu />
       </div>

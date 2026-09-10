@@ -520,3 +520,26 @@ export interface DocumentListParams {
   size?: number
   sort?: string
 }
+
+// ---- ai/chat/dto/AiChatRequest.java ----
+// message is the ONLY field — no conversationId/context/history. Phase 16
+// is stateless; every request is independent (verified directly against
+// backend source, not assumed).
+export interface AiChatRequest {
+  message: string
+}
+
+// ---- ai/chat/dto/AiChatSource.java ----
+// One entry per retrieved chunk actually used — not deduplicated by
+// document (two chunks from the same document are two distinct entries).
+export interface AiChatSource {
+  documentId: string
+  documentName: string
+  chunkIndex: number
+}
+
+// ---- ai/chat/dto/AiChatResponse.java ----
+export interface AiChatResponse {
+  answer: string
+  sources: AiChatSource[]
+}

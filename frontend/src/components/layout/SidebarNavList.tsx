@@ -45,17 +45,19 @@ export function SidebarNavList({
       </ul>
 
       <ul className="flex flex-col gap-1 border-t border-border pt-2">
-        <li>
-          <button
-            type="button"
-            onClick={onOpenAi}
-            className={linkClasses(false, collapsed)}
-            aria-label="Open AI Assistant"
-          >
-            <Bot className="h-4 w-4 shrink-0" aria-hidden="true" />
-            {!collapsed && <span>AI Assistant</span>}
-          </button>
-        </li>
+        {permissions.has('AI_USE') && (
+          <li>
+            <button
+              type="button"
+              onClick={onOpenAi}
+              className={linkClasses(false, collapsed)}
+              aria-label="Open AI Assistant"
+            >
+              <Bot className="h-4 w-4 shrink-0" aria-hidden="true" />
+              {!collapsed && <span>AI Assistant</span>}
+            </button>
+          </li>
+        )}
         <li>
           <NavItemLink
             to="/settings"

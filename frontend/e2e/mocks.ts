@@ -1114,3 +1114,25 @@ export async function mockDocumentsResource(page: Page, initial: (typeof TEST_DO
 
   return { documents }
 }
+
+// ---------------------------------------------------------------------------
+// Phase 25 — AI Assistant fixtures
+// ---------------------------------------------------------------------------
+
+export async function mockAiChatSuccess(page: Page, response: { answer: string; sources?: unknown[] }) {
+  await page.route('**/api/v1/ai/chat', (route) =>
+    json(route, 200, { answer: response.answer, sources: response.sources ?? [] }),
+  )
+}
+
+export async function mockAiChatDisabled(page: Page) {
+  await page.route('**/api/v1/ai/chat', (route) =>
+    json(route, 503, apiError(503, 'AI_DISABLED', 'The AI assistant is currently unavailable', '/api/v1/ai/chat')),
+  )
+}
+
+export async function mockAiChatProviderError(page: Page) {
+  await page.route('**/api/v1/ai/chat', (route) =>
+    json(route, 502, apiError(502, 'AI_PROVIDER_ERROR', 'The AI assistant is temporarily unavailable', '/api/v1/ai/chat')),
+  )
+}

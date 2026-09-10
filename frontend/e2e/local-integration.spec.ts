@@ -361,6 +361,25 @@ test.describe('local integration — documents (real backend, full lifecycle)', 
   })
 })
 
+test.describe('local integration — AI Assistant (real backend, honest disabled-AI path)', () => {
+  test('sending a real message shows the real 503 AI_DISABLED response (bizpilot.ai.enabled=false locally)', async ({
+    page,
+  }) => {
+    await realLogin(page, OWNER)
+    await page.getByRole('banner').getByRole('button', { name: 'Open AI Assistant' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    await page.getByLabel('Message').fill('How many active customers do we have?')
+    await page.getByRole('button', { name: 'Send' }).click()
+
+    // AI is disabled by default in this local environment — the real
+    // backend genuinely returns 503 AI_DISABLED, exactly like the existing
+    // Lead AI Scoring local-integration test. Never fake a successful
+    // answer here; this is the honest, real outcome.
+    await expect(page.getByText("AI features aren't enabled for this workspace.")).toBeVisible()
+  })
+})
+
 test.describe('local integration — RBAC (real backend authorization, not just UI hiding)', () => {
   test('SALES: can create/edit quotations, cannot cancel; cannot deactivate products', async ({ page }) => {
     await realLogin(page, SALES)

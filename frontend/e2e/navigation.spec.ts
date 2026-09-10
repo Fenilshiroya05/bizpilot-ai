@@ -97,7 +97,11 @@ test.describe('navigation', () => {
     await expect(main.getByText('OWNER')).toBeVisible()
   })
 
-  test('the AI Assistant entry opens a non-functional placeholder drawer, never calling the chat API', async ({
+  // Phase 25 replaced the placeholder with the real assistant (see
+  // ai-assistant.spec.ts for full coverage) — this test now only confirms
+  // the entry point itself: opens the real drawer, and merely opening it
+  // (without sending a message) never calls the chat API.
+  test('the AI Assistant entry opens the real drawer without calling the chat API until a message is sent', async ({
     page,
   }) => {
     let chatCalled = false
@@ -112,7 +116,8 @@ test.describe('navigation', () => {
 
     const drawer = page.getByRole('dialog', { name: 'AI Assistant' })
     await expect(drawer).toBeVisible()
-    await expect(drawer.getByText('Coming in Phase 25')).toBeVisible()
+    await expect(drawer.getByText('Ask about your business')).toBeVisible()
+    expect(chatCalled).toBe(false)
 
     await page.keyboard.press('Escape')
     await expect(drawer).not.toBeVisible()
